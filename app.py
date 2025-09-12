@@ -35,6 +35,12 @@ from openpyxl import Workbook, load_workbook
 app = Flask(__name__)
 app.secret_key = "dev-secret"  # cambia en producción
 from flask import Flask, render_template
+from flask import redirect, url_for
+
+@app.route("/")
+def index():
+    # Redirige automáticamente a validar
+    return redirect(url_for("validar"))
 
 app = Flask(__name__)
 
@@ -48,11 +54,7 @@ FALLBACK_BASE_URL = "http://192.168.1.41:5000"
 # Nota mínima para aprobar
 PASSING_GRADE = 60.0
 
-# --- Root/healthcheck para Render ---
-@app.route("/")
-def index():
-    # Render pega a "/" para health-check; responde 200/redirect
-    return redirect(url_for("validar"))
+
 
 # =========================================
 # Context processors

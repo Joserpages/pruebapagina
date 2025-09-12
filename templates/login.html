@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Iniciar sesión — AEA GT{% endblock %}
+{% block content %}
+<section class="auth">
+  <div class="auth-card card">
+    <h1 class="auth-title">Acceso administrador</h1>
+    <form method="post" class="form" style="margin-top:8px;">
+      <label class="field">
+        <span>Usuario</span>
+        <input name="username" placeholder="admin" required />
+      </label>
+      <label class="field">
+        <span>Contraseña</span>
+        <input id="pwd" name="password" type="password" placeholder="••••••••" required />
+      </label>
+      <button class="btn btn-primary" style="width:100%;margin-top:8px;">Entrar</button>
+      <button type="button" class="btn" style="width:100%;margin-top:6px;" onclick="const i=document.getElementById('pwd'); i.type=i.type==='password'?'text':'password';">Mostrar / ocultar</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
+

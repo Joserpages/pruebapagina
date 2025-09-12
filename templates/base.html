@@ -1,0 +1,120 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Sistema de Certificados{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='img/logo2.png') }}">
+  
+</head>
+<body>
+
+<!-- Agrega esto en <head> de base.html -->
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+<header class="topbar">
+  <div class="container brand-wrap">
+    <a class="brand" href="{{ url_for('validar') }}">
+      <img class="brand-logo" src="/static/img/Diseño sin título (1).png" alt="AEA" />
+    </a>
+    <a class="brand title" href="{{ url_for('validar') }}">American English Academy GT</a>
+
+    <nav class="nav" style="margin-left:auto">
+      {% if current_user %}
+        <a href="{{ url_for('validar') }}">Validar</a>
+        <a href="{{ url_for('admin') }}">Admin</a>
+        <a href="{{ url_for('logout') }}">Cerrar sesión</a>
+      {% endif %}
+    </nav>
+  </div>
+</header>
+
+<div class="hero-underline"></div>
+
+<div class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-stack">
+        {% for cat, msg in messages %}
+          <div class="alert {{ 'alert-ok' if cat=='ok' else 'alert-err' }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<footer class="site-footer">
+  <div class="container foot">
+    <div class="foot-left">
+      <img src="/static/img/Diseño sin título (1).png" alt="AEA" class="foot-logo">
+      <span class="foot-brand">American English Academy GT</span>
+    </div>
+    <div class="foot-right">
+      <span>© {{ YEAR }} Todos los derechos reservados.</span>
+    </div>
+  </div>
+</footer>
+<!-- Modal de confirmación -->
+<div id="confirmModal" class="modal-overlay">
+  <div class="modal-box">
+    <h3>Confirmar acción</h3>
+    <p>¿Seguro que deseas eliminar este estudiante?</p>
+    <div class="modal-actions">
+      <button id="confirmYes" class="btn btn-danger">Eliminar</button>
+      <button id="confirmNo" class="btn btn-outline">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Función global para abrir modal en lugar de confirm()
+  function openConfirmModal(actionUrl) {
+    const modal = document.getElementById("confirmModal");
+    modal.style.display = "flex";
+
+    // Botones
+    document.getElementById("confirmYes").onclick = function () {
+      // Crear form dinámico y enviarlo
+      const form = document.createElement("form");
+      form.method = "POST";
+      form.action = actionUrl;
+      document.body.appendChild(form);
+      form.submit();
+    };
+    document.getElementById("confirmNo").onclick = function () {
+      modal.style.display = "none";
+    };
+  }
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll(".delete-btn").forEach(btn => {
+    btn.addEventListener("click", function () {
+      const form = this.closest("form");
+
+      Swal.fire({
+        title: "¿Estás seguro?",
+        text: "Esta acción eliminará al estudiante de forma permanente.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonColor: "#d33",
+        cancelButtonColor: "#3085d6",
+        confirmButtonText: "Sí, eliminar",
+        cancelButtonText: "Cancelar"
+      }).then((result) => {
+        if (result.isConfirmed) {
+          form.submit();
+        }
+      });
+    });
+  });
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Editar estudiante{% endblock %}
+{% block content %}
+<h2>Editar estudiante #{{ est.id }}</h2>
+
+<!-- Pasamos la etapa/nivel actuales mediante data-* -->
+<div id="edit-data"
+     data-cur-etapa="{{ etapa or '' }}"
+     data-cur-nivel="{{ nivel or '' }}">
+</div>
+
+<form class="card form" method="post">
+  <div class="grid two">
+    <label class="field">
+      <span>Nombre completo</span>
+      <input name="nombre" value="{{ est.nombre }}" required />
+    </label>
+
+    <label class="field">
+      <span>Etapa</span>
+      <select name="etapa" id="etapa_edit" required>
+        <option value="">Selecciona etapa</option>
+        {% for e in ETAPAS.keys() %}
+          <option value="{{ e }}">{{ e }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Nivel</span>
+      <select name="nivel" id="nivel_edit" required>
+        <option value="">Selecciona nivel</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Nota</span>
+      <input name="nota" type="number" step="0.01" min="0" max="100"
+             value="{{ '%.2f'|format(est.nota) }}" required />
+    </label>
+  </div>
+
+  <div style="margin:8px 0;color:var(--muted);">
+    El estado se calcula automáticamente (Aprobado si nota ≥ {{ PASSING_GRADE }}, de lo contrario Reprobado).
+  </div>
+  <button class="btn btn-primary">Guardar cambios</button>
+  <a href="{{ url_for('admin') }}" class="link" style="margin-left:10px;">Cancelar</a>
+</form>
+
+<!-- ETAPAS a JSON (seguro para JS) -->
+<script id="mapa-data" type="application/json">{{ ETAPAS|tojson }}</script>
+<script>
+  const MAPA = JSON.parse(document.getElementById('mapa-data').textContent);
+
+  // Leemos la etapa/nivel actuales desde data-attributes
+  const editNode   = document.getElementById('edit-data');
+  const CUR_ETAPA  = editNode.dataset.curEtapa || '';
+  const CUR_NIVEL  = editNode.dataset.curNivel || '';
+
+  const etapaSel = document.getElementById('etapa_edit');
+  const nivelSel = document.getElementById('nivel_edit');
+
+  function fillNiveles(etapa, selectEl, seleccionado){
+    selectEl.innerHTML = '<option value="">Selecciona nivel</option>';
+    (MAPA[etapa] || []).forEach(n=>{
+      const o = document.createElement('option');
+      o.value = o.textContent = n;
+      if (seleccionado && seleccionado === n) o.selected = true;
+      selectEl.appendChild(o);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    if (CUR_ETAPA) etapaSel.value = CUR_ETAPA;
+    fillNiveles(etapaSel.value, nivelSel, CUR_NIVEL);
+  });
+
+  etapaSel.addEventListener('change', ()=> fillNiveles(etapaSel.value, nivelSel, ''));
+</script>
+{% endblock %}

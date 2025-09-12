@@ -1,0 +1,72 @@
+﻿{% extends "base.html" %}
+{% block title %}Certificado{% endblock %}
+
+{% block content %}
+<section class="cert">
+  <h1 class="page-title">Certificado de Estudiante</h1>
+
+  <div class="cert-card">
+    <div class="info-grid">
+      <!-- Columna izquierda: datos -->
+      <div class="info">
+        <dl class="kv">
+          <div>
+            <dt>Nombre</dt>
+            <dd>{{ est.nombre }}</dd>
+          </div>
+          <div>
+            <dt>Etapa</dt>
+            <dd>{{ etapa }}</dd>
+          </div>
+          <div>
+            <dt>Nivel</dt>
+            <dd>{{ nivel }}</dd>
+          </div>
+          <div>
+            <dt>Nota</dt>
+            <dd>{{ '%.2f'|format(est.nota) }}</dd>
+          </div>
+          <div>
+            <dt>Estado</dt>
+            <dd>
+              <span class="chip {{ 'chip-ok' if est.estado=='Aprobado' else 'chip-bad' }}">
+                {{ est.estado }}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Emitido</dt>
+            <dd>{{ est.creado_en }}</dd>
+          </div>
+        </dl>
+
+        <div class="btns acciones">
+          {% if est.estado == "Aprobado" %}
+            <button class="btn btn-primary" onclick="window.print()">Imprimir / Guardar PDF</button>
+            <a class="btn btn-outline" href="{{ url_for('cert_pdf', token=est.token) }}">Ver Diploma</a>
+            {% if est.notas %}
+              <a class="btn btn-sm btn-outline" href="{{ est.notas }}" target="_blank">Ver Notas</a>
+            {% endif %}
+          {% else %}
+            {% if est.notas %}
+              <a class="btn btn-sm btn-outline" href="{{ est.notas }}" target="_blank">Ver Notas</a>
+            {% else %}
+              <span class="chip-bad">Notas no disponibles</span>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Columna derecha: QR -->
+      <div class="qr-panel">
+        <div class="qr-box">
+          <img src="{{ qr_url }}" alt="QR" />
+        </div>
+        <div class="qr-caption">Escanea para validar</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="legal">© {{ YEAR }} Sistema de Certificados</p>
+</section>
+{% endblock %}

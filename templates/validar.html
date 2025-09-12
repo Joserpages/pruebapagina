@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Validar{% endblock %}
+{% block content %}
+
+<section class="hero-validate">
+  <h1>Validar certificado</h1>
+  <p class="muted">Ingresa el nombre del estudiante, la etapa y el nivel.</p>
+</section>
+
+<!-- Guardamos valores preseleccionados en data-* -->
+<div id="validar-data"
+     data-pre-etapa="{{ q_etapa or '' }}"
+     data-pre-nivel="{{ q_nivel or '' }}">
+</div>
+
+<form method="post" class="card form" style="padding:16px;">
+  <div class="grid two">
+    <label class="field">
+      <span>Nombre del estudiante</span>
+      <input name="nombre" value="{{ q_nombre or '' }}" placeholder="Ej. Ana Pérez" required />
+    </label>
+
+    <label class="field">
+      <span>Etapa</span>
+      <select name="etapa" id="etapa_val" required>
+        <option value="">Selecciona etapa</option>
+        {% for e in ETAPAS.keys() %}
+          <option value="{{ e }}">{{ e }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Nivel</span>
+      <select name="nivel" id="nivel_val" required>
+        <option value="">Selecciona nivel</option>
+      </select>
+    </label>
+  </div>
+  <button class="btn btn-primary" style="margin-top:8px;">Buscar</button>
+</form>
+
+{% if resultados %}
+<div class="card" style="padding:14px; margin-top:14px;">
+  <h3 style="margin:0 0 10px 0;">Coincidencias encontradas</h3>
+  <div class="table-wrap" style="margin-top:8px;">
+    <table class="responsive">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Nombre</th>
+          <th>Etapa / Nivel</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in resultados %}
+        <tr>
+          <td data-th="#">{{ r.id }}</td>
+          <td data-th="Nombre">{{ r.nombre }}</td>
+          <td data-th="Etapa / Nivel">{{ r.curso }}</td>
+          <td data-th="Acciones">
+            <a class="btn btn-primary" href="{{ url_for('ver_cert', token=r.token) }}">Ver certificado</a>
+            <a class="btn" href="{{ url_for('cert_pdf', token=r.token) }}">Descargar PDF</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Datos de mapa en JSON seguro -->
+<script id="mapa-data" type="application/json">{{ ETAPAS|tojson }}</script>
+<script>
+  const MAPA = JSON.parse(document.getElementById('mapa-data').textContent);
+
+  // Leemos valores preseleccionados desde data-attributes
+  const dataNode   = document.getElementById('validar-data');
+  const PRE_ETAPA  = dataNode.dataset.preEtapa || '';
+  const PRE_NIVEL  = dataNode.dataset.preNivel || '';
+
+  function fillNiveles(idEtapa, idNivel, seleccionado){
+    const etapa = document.getElementById(idEtapa).value;
+    const sel   = document.getElementById(idNivel);
+    sel.innerHTML = '<option value="">Selecciona nivel</option>';
+    (MAPA[etapa] || []).forEach(n => {
+      const o = document.createElement('option');
+      o.value = o.textContent = n;
+      if (seleccionado && seleccionado === n) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const etapaSel = document.getElementById('etapa_val');
+    if (PRE_ETAPA) etapaSel.value = PRE_ETAPA;
+    fillNiveles('etapa_val', 'nivel_val', PRE_NIVEL);
+    etapaSel.addEventListener('change', () => fillNiveles('etapa_val','nivel_val',''));
+  });
+</script>
+
+{% endblock %}

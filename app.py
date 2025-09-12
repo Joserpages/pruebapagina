@@ -39,34 +39,24 @@ from flask import redirect, url_for
 from flask import Flask, render_template, request, redirect, url_for, abort, flash, session, send_file, has_request_context
 # ... (tus otros imports iguales)
 
+# ================== APP ÚNICA ==================
+# (No re-crear app más abajo; si necesitas añadir cosas, hazlo sobre esta misma instancia)
 app = Flask(__name__)
-app.secret_key = "dev-secret"  # cambia en producción
+app.secret_key = os.getenv("SECRET_KEY", "dev-secret")  # cámbialo en prod
 
-# --- Health check y home: Render necesita 200 OK ---
-@app.route("/health")
-def health():
-    return "ok", 200
-
-@app.route("/")
-def index():
-    # puedes enviar directo al validador, pero devolviendo 200
-    # mejor deja un HTML mínimo o redirige a /validar (302 está bien).
-    return redirect(url_for("validar"))
-
-
-
-
-# Si Render te expone RENDER_EXTERNAL_URL, la usamos como respaldo
-FALLBACK_BASE_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
-
+# ================== CONFIG ==================
+# En Render, RENDER_EXTERNAL_URL queda definido. Si no existe (local), puedes usar tu LAN.
+FALLBACK_BASE_URL = (os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
 PASSING_GRADE = 60.0
+
 
 
 # Si sirves por LAN, usa tu IP local aquí para que el QR funcione
-FALLBACK_BASE_URL = "http://192.168.1.41:5000"
+#FALLBACK_BASE_URL = "http://192.168.1.41:5000"
 
 # Nota mínima para aprobar
-PASSING_GRADE = 60.0
+
+#PASSING_GRADE = 60.0
 
 
 
@@ -317,17 +307,25 @@ def seed_if_empty():
 # QR
 # =========================================
 def build_qr(token: str):
+    """
+    Genera /static/qrs/<token>.png apuntando a /cert/<token>.
+    Usa RENDER_EXTERNAL_URL en Render; en local, usa request.host_url.
+    """
     path = url_for("ver_cert", token=token, _external=False)
 
-    # Base: host real si hay request; si no, usa RENDER_EXTERNAL_URL o lo que tengas en FALLBACK_BASE_URL
     if has_request_context():
         base = request.host_url.rstrip("/")
     else:
         base = (os.environ.get("RENDER_EXTERNAL_URL") or FALLBACK_BASE_URL or "").rstrip("/")
 
-    url = f"{base}{path}"
-    ...
+    if not base:
+        base = "http://127.0.0.1:5000"  # último recurso en local
 
+    url = f"{base}{path}"
+
+    os.makedirs(QR_DIR, exist_ok=True)
+    img = qrcode.make(url)
+    img.save(os.path.join(QR_DIR, f"{token}.png"))
 
 # =========================================
 # Auth helpers

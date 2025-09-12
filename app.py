@@ -349,6 +349,11 @@ def inject_user():
 # =========================================
 # Rutas públicas
 # =========================================
+@app.route("/")
+def index():
+    # redirige a /validar (Render devuelve 302 + 200 en /validar)
+    return redirect(url_for("validar"))
+
 @app.route("/validar", methods=["GET", "POST"])
 def validar():
     if request.method == "POST":

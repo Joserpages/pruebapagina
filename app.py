@@ -36,22 +36,31 @@ app = Flask(__name__)
 app.secret_key = "dev-secret"  # cambia en producción
 from flask import Flask, render_template
 from flask import redirect, url_for
-
+from flask import Flask, render_template, request, redirect, url_for, abort, flash, session, send_file, has_request_context
+# ... (tus otros imports iguales)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")  # cambia en producción
+app.secret_key = "dev-secret"  # cambia en producción
+
+# --- Health check y home: Render necesita 200 OK ---
+@app.route("/health")
+def health():
+    return "ok", 200
+
+@app.route("/")
+def index():
+    # puedes enviar directo al validador, pero devolviendo 200
+    # mejor deja un HTML mínimo o redirige a /validar (302 está bien).
+    return redirect(url_for("validar"))
+
+
+
 
 # Si Render te expone RENDER_EXTERNAL_URL, la usamos como respaldo
 FALLBACK_BASE_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
 
 PASSING_GRADE = 60.0
 
-@app.route("/")
-def root():
-    # Opción A: redirigir
-    return redirect(url_for("validar"))
-    # Opción B: mostrar el formulario directamente
-    # return render_template("validar.html")
 
 # Si sirves por LAN, usa tu IP local aquí para que el QR funcione
 FALLBACK_BASE_URL = "http://192.168.1.41:5000"

@@ -48,6 +48,11 @@ FALLBACK_BASE_URL = "http://192.168.1.41:5000"
 # Nota mínima para aprobar
 PASSING_GRADE = 60.0
 
+# --- Root/healthcheck para Render ---
+@app.route("/")
+def index():
+    # Render pega a "/" para health-check; responde 200/redirect
+    return redirect(url_for("validar"))
 
 # =========================================
 # Context processors

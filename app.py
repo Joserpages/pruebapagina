@@ -34,6 +34,13 @@ from openpyxl import load_workbook
 from openpyxl import Workbook, load_workbook
 app = Flask(__name__)
 app.secret_key = "dev-secret"  # cambia en producción
+from flask import Flask, render_template
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return render_template("validar.html")  # o la página inicial que quieras mostrar
 
 # Si sirves por LAN, usa tu IP local aquí para que el QR funcione
 FALLBACK_BASE_URL = "http://192.168.1.41:5000"

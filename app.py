@@ -37,16 +37,21 @@ app.secret_key = "dev-secret"  # cambia en producción
 from flask import Flask, render_template
 from flask import redirect, url_for
 
-@app.route("/")
-def index():
-    # Redirige automáticamente a validar
-    return redirect(url_for("validar"))
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")  # cambia en producción
+
+# Si Render te expone RENDER_EXTERNAL_URL, la usamos como respaldo
+FALLBACK_BASE_URL = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+
+PASSING_GRADE = 60.0
 
 @app.route("/")
-def home():
-    return render_template("validar.html")  # o la página inicial que quieras mostrar
+def root():
+    # Opción A: redirigir
+    return redirect(url_for("validar"))
+    # Opción B: mostrar el formulario directamente
+    # return render_template("validar.html")
 
 # Si sirves por LAN, usa tu IP local aquí para que el QR funcione
 FALLBACK_BASE_URL = "http://192.168.1.41:5000"
@@ -303,28 +308,16 @@ def seed_if_empty():
 # QR
 # =========================================
 def build_qr(token: str):
-    # URL absoluta al certificado
     path = url_for("ver_cert", token=token, _external=False)
-    base = FALLBACK_BASE_URL.rstrip("/")
-    if has_request_context():
-        host = request.host_url.rstrip("/")
-        if "127.0.0.1" not in host and "localhost" not in host:
-            base = host
-    url = f"{base}{path}"
 
-    from qrcode.image.pil import PilImage
-    qr = qrcode.QRCode(
-        version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=12,
-        border=4
-    )
-    qr.add_data(url)
-    qr.make(fit=True)
-    img: PilImage = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-    img = img.resize((640, 640))
-    img.save(os.path.join(QR_DIR, f"{token}.png"))
-    return f"/static/qrs/{token}.png"
+    # Base: host real si hay request; si no, usa RENDER_EXTERNAL_URL o lo que tengas en FALLBACK_BASE_URL
+    if has_request_context():
+        base = request.host_url.rstrip("/")
+    else:
+        base = (os.environ.get("RENDER_EXTERNAL_URL") or FALLBACK_BASE_URL or "").rstrip("/")
+
+    url = f"{base}{path}"
+    ...
 
 
 # =========================================

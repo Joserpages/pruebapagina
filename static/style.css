@@ -340,3 +340,72 @@ body::before {
   font-size: 12px;
   border-radius: 8px;
 }
+/* ====== TABLA ADMIN RESPONSIVE ====== */
+
+/* Evita que corte cada letra y permite scroll horizontal si hace falta */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+table.responsive {
+  width: 100%;
+  table-layout: auto;
+}
+table.responsive th,
+table.responsive td {
+  white-space: nowrap;       /* no cortes por letra */
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+/* En pantallas pequeñas, convierte la tabla en "cards" apiladas */
+@media (max-width: 640px) {
+  table.responsive {
+    display: block;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  table.responsive thead {
+    display: none;           /* ocultamos headers; usaremos data-th */
+  }
+  table.responsive tbody {
+    display: block;
+  }
+  table.responsive tr {
+    display: block;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    margin: 12px 0;
+    padding: 8px 0;
+  }
+  table.responsive td {
+    display: block;
+    width: 100%;
+    white-space: normal;     /* ahora sí, permite saltos por palabra */
+    padding: 10px 14px;
+    border: 0;
+    border-top: 1px dashed #eef2f7;
+  }
+  table.responsive td:first-child {
+    border-top: 0;
+  }
+  /* etiqueta con el nombre de la columna usando data-th del HTML que ya tienes */
+  table.responsive td::before {
+    content: attr(data-th);
+    display: block;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 4px;
+  }
+  /* Ajustes visuales extra */
+  .qr-thumb {
+    max-width: 120px;
+    height: auto;
+  }
+  .row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}

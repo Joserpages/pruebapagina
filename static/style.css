@@ -321,3 +321,22 @@ body::before {
   from { transform:scale(.9); opacity:0; }
   to { transform:scale(1); opacity:1; }
 }
+.inline-date-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
+.input-sm {
+  padding: 6px 8px;
+  font-size: 12px;
+  height: 32px;
+}
+
+.btn.btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+}

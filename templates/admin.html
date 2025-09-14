@@ -36,10 +36,12 @@
   <div class="help">
     El estado se calcula automáticamente (Aprobado si nota ≥ {{ PASSING_GRADE }}).
   </div>
+
+  <!-- NUEVO: Campo para link de Drive (notas) -->
   <div class="field">
-  <span>Notas (link de Drive) <small style="color:#6b7280;font-weight:400">(opcional)</small></span>
-  <input class="input" type="url" name="notas" placeholder="https://drive.google.com/..." />
-</div>
+    <span>Notas (link de Drive) <small style="color:#6b7280;font-weight:400">(opcional)</small></span>
+    <input class="input" type="url" name="notas" placeholder="https://drive.google.com/..." />
+  </div>
 
   <div class="btns">
     <button class="btn btn-primary">Guardar y generar QR</button>
@@ -47,6 +49,7 @@
     <a href="{{ url_for('export_xlsx') }}" class="btn">Exportar Excel (.xlsx)</a>
   </div>
 </form>
+
 <form class="card" method="post" action="{{ url_for('import_xlsx') }}" enctype="multipart/form-data" style="padding:12px;margin:12px 0;">
   <div class="grid two">
     <div>
@@ -104,7 +107,21 @@
         <td data-th="Etapa / Nivel">{{ e.curso }}</td>
         <td data-th="Nota">{{ '%.2f'|format(e.nota) }}</td>
         <td data-th="Estado" class="{{ 'ok' if e.estado=='Aprobado' else 'bad' }}">{{ e.estado }}</td>
-        <td data-th="Creado"><small>{{ e.creado_en }}</small></td>
+
+        <!-- MODIFICADO: Celda “Creado” editable en línea -->
+        <td data-th="Creado">
+          <form method="post"
+                action="{{ url_for('update_fecha', id=e.id) }}"
+                class="inline-date-form">
+            <input type="datetime-local"
+                   name="creado_en"
+                   value="{{ e.creado_en|dtlocal }}"
+                   class="input"
+                   style="padding:6px 8px;font-size:12px;height:32px;max-width:210px;">
+            <button class="btn btn-sm">Guardar</button>
+          </form>
+        </td>
+
         <td data-th="Certificado"><a class="btn btn-outline" href="{{ e.cert_url }}" target="_blank">Ver</a></td>
         <td data-th="QR"><img src="{{ e.qr_url }}" alt="QR" class="qr-thumb" /></td>
         <td data-th="Acciones">
@@ -113,10 +130,9 @@
             <form method="post" action="{{ url_for('regenerar_qr', token=e.token) }}">
               <button class="btn btn-sm btn-secondary">🔄 Re-gen</button>
             </form>
-              <form method="post" action="{{ url_for('eliminar_estudiante', id=e.id) }}" class="delete-form">
-                  <button type="button" class="btn danger delete-btn">Eliminar</button>
-</form>
-
+            <form method="post" action="{{ url_for('eliminar_estudiante', id=e.id) }}" class="delete-form">
+              <button type="button" class="btn danger delete-btn">Eliminar</button>
+            </form>
           </div>
         </td>
       </tr>

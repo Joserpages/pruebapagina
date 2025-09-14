@@ -39,6 +39,8 @@ from flask import redirect, url_for
 from flask import Flask, render_template, request, redirect, url_for, abort, flash, session, send_file, has_request_context
 # ... (tus otros imports iguales)
 
+
+
 # ================== APP ÚNICA ==================
 # (No re-crear app más abajo; si necesitas añadir cosas, hazlo sobre esta misma instancia)
 app = Flask(__name__)
@@ -48,6 +50,8 @@ app.secret_key = os.getenv("SECRET_KEY", "dev-secret")  # cámbialo en prod
 # En Render, RENDER_EXTERNAL_URL queda definido. Si no existe (local), puedes usar tu LAN.
 FALLBACK_BASE_URL = (os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
 PASSING_GRADE = 60.0
+
+# después de crear app = Flask(__name__) y antes de renderizar plantillas
 
 
 
@@ -302,6 +306,26 @@ def seed_if_empty():
             build_qr(token)
             print(f"➡ Alumno demo creado. Token: {token}")
 
+def _to_datetime_local_str(db_str: str) -> str:
+    """
+    'YYYY-MM-DD HH:MM:SS' -> 'YYYY-MM-DDTHH:MM' para prellenar el input.
+    """
+    if not db_str:
+        return ""
+    try:
+        dt = datetime.strptime(db_str, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%dT%H:%M")
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(db_str)
+        return dt.strftime("%Y-%m-%dT%H:%M")
+    except Exception:
+        return ""
+
+# ⬇️ REGISTRO DEL FILTRO (después de definir la función)
+app.jinja_env.filters['dtlocal'] = _to_datetime_local_str
+
 
 # =========================================
 # QR
@@ -344,6 +368,15 @@ def inject_user():
     return {"current_user": session.get("user"),
             "PASSING_GRADE": PASSING_GRADE,
             "ETAPAS": ETAPAS}
+# --- Helpers para el <input type="datetime-local"> ---
+def _parse_datetime_local(s: str):
+    """'YYYY-MM-DDTHH:MM' -> datetime (o None si es inválido)."""
+    try:
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M")
+    except Exception:
+        return None
+
+
 
 
 # =========================================
@@ -484,6 +517,7 @@ def _pick_font(name: str, fallback_bold: bool = False) -> str:
         if "Arial" in regs:
             return "Arial"
         return "Helvetica"
+    
 
 @app.route("/cert/<token>", endpoint="ver_cert")
 def certificate_view(token):
@@ -1056,6 +1090,20 @@ def download_import_template():
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+@app.route("/admin/update-date/<int:id>", methods=["POST"])
+@login_required
+def update_fecha(id):
+    creado_input = (request.form.get("creado_en") or "").strip()
+    dt = _parse_datetime_local(creado_input)
+    if not dt:
+        flash("La fecha es inválida. Usa el selector de fecha y hora.", "error")
+        return redirect(url_for("admin"))
+
+    creado_val = dt.strftime("%Y-%m-%d %H:%M:%S")
+    with conn() as c:
+        c.execute("UPDATE estudiantes SET creado_en=? WHERE id=?", (creado_val, id))
+    flash("Fecha actualizada.", "ok")
+    return redirect(url_for("admin"))
 
 # =========================================
 # Main

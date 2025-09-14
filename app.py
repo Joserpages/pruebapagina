@@ -46,6 +46,9 @@ from flask import Flask, render_template, request, redirect, url_for, abort, fla
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret")  # cámbialo en prod
 
+# Ejecutar siempre al cargar el módulo (también bajo gunicorn)
+
+
 # ================== CONFIG ==================
 # En Render, RENDER_EXTERNAL_URL queda definido. Si no existe (local), puedes usar tu LAN.
 FALLBACK_BASE_URL = (os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
@@ -326,7 +329,14 @@ def _to_datetime_local_str(db_str: str) -> str:
 # ⬇️ REGISTRO DEL FILTRO (después de definir la función)
 app.jinja_env.filters['dtlocal'] = _to_datetime_local_str
 
-
+with app.app_context():
+    try:
+        init_db()
+        init_users()
+        seed_if_empty()
+    except Exception as e:
+        # Útil para ver en logs de Render si algo falla al migrar
+        print("INIT ERROR:", repr(e))
 # =========================================
 # QR
 # =========================================
@@ -717,12 +727,15 @@ def admin():
         curso_text = f"{etapa} - {nivel}"
 
         token  = uuid.uuid4().hex
+        
+# ...
         creado = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with conn() as c:
             c.execute("""
-                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en)
-                VALUES(?,?,?,?,?,?)
-            """, (token, nombre, curso_text, nota, estado, creado, notas_url))
+            INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas)
+              VALUES(?,?,?,?,?,?,?)
+                """, (token, nombre, curso_text, nota, estado, creado, notas_url))
+
             
 
         build_qr(token)
@@ -832,7 +845,7 @@ def editar_estudiante(id):
 
         with conn() as c:
             c.execute("""UPDATE estudiantes
-                         SET nombre=?, curso=?, nota=?, estado=?
+                         SET nombre=?, curso=?, nota=?, estado=? 
                          WHERE id=?""",
                       (nombre, curso_text, nota, estado, id))
         flash("Estudiante actualizado.", "ok")

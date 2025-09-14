@@ -36,7 +36,11 @@
   <div class="help">
     El estado se calcula automáticamente (Aprobado si nota ≥ {{ PASSING_GRADE }}).
   </div>
-  
+  <div class="field">
+  <span>Notas (link de Drive) <small style="color:#6b7280;font-weight:400">(opcional)</small></span>
+  <input class="input" type="url" name="notas" placeholder="https://drive.google.com/..." />
+</div>
+
   <div class="btns">
     <button class="btn btn-primary">Guardar y generar QR</button>
     <a href="{{ url_for('export_csv') }}" class="btn">Exportar CSV</a>

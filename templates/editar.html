@@ -39,6 +39,12 @@
              value="{{ '%.2f'|format(est.nota) }}" required />
     </label>
   </div>
+  <div class="field">
+  <span>Notas (link de Drive)</span>
+  <input class="input" type="url" name="notas"
+         value="{{ est.notas or '' }}" placeholder="https://drive.google.com/..." />
+</div>
+
 
   <div style="margin:8px 0;color:var(--muted);">
     El estado se calcula automáticamente (Aprobado si nota ≥ {{ PASSING_GRADE }}, de lo contrario Reprobado).

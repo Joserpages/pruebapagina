@@ -664,7 +664,7 @@ def admin():
         etapa  = (request.form.get("etapa")  or "").strip()
         nivel  = (request.form.get("nivel")  or "").strip()
         nota_s = (request.form.get("nota")   or "").strip()
-
+        notas_url = (request.form.get("notas") or "").strip()   # <-- NUEVO
         if not (nombre and etapa and nivel and nota_s):
             flash("Completa nombre, etapa, nivel y nota.", "error")
             return redirect(url_for("admin"))
@@ -688,7 +688,8 @@ def admin():
             c.execute("""
                 INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en)
                 VALUES(?,?,?,?,?,?)
-            """, (token, nombre, curso_text, nota, estado, creado))
+            """, (token, nombre, curso_text, nota, estado, creado, notas_url))
+            
 
         build_qr(token)
         flash("Estudiante creado y QR generado.", "ok")
@@ -779,7 +780,7 @@ def editar_estudiante(id):
         etapa  = (request.form.get("etapa")  or "").strip()
         nivel  = (request.form.get("nivel")  or "").strip()
         nota_s = (request.form.get("nota")   or "").strip()
-
+        notas_url = (request.form.get("notas") or "").strip()   # <-- NUEVO
         if not (nombre and etapa and nivel and nota_s):
             flash("Completa nombre, etapa, nivel y nota.", "error")
             return redirect(url_for("editar_estudiante", id=id))
@@ -802,6 +803,8 @@ def editar_estudiante(id):
                       (nombre, curso_text, nota, estado, id))
         flash("Estudiante actualizado.", "ok")
         return redirect(url_for("admin"))
+         
+         
 
     # separar etapa/nivel para el form
     etapa_val, nivel_val = "", ""
@@ -810,7 +813,7 @@ def editar_estudiante(id):
 
     return render_template("editar.html", est=e, etapa_val=etapa_val, nivel_val=nivel_val)
 
-
+    
 @app.route("/admin/eliminar/<int:id>", methods=["POST"])
 @login_required
 def eliminar_estudiante(id):

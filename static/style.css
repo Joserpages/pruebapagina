@@ -409,3 +409,31 @@ table.responsive td {
     gap: 8px;
   }
 }
+/* --- Arreglo de visibilidad de la columna Acciones en desktop --- */
+.table-wrap {
+  overflow-x: auto;              /* permite scroll horizontal */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* fuerza un ancho mínimo para que quepan todas las columnas */
+table.responsive {
+  min-width: 1150px;             /* puedes subir/bajar este valor */
+  table-layout: auto;
+}
+
+/* deja de “nowrap” SOLO en la columna Acciones para que sus botones quepan */
+table.responsive td[data-th="Acciones"] {
+  white-space: normal;           /* permitir saltos */
+  word-break: keep-all;
+}
+
+/* organiza bien los botones dentro de Acciones */
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* opcional: muestra una barra de scroll más visible en navegadores webkit */
+.table-wrap::-webkit-scrollbar { height: 10px; }
+.table-wrap::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }

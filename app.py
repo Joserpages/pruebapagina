@@ -224,6 +224,7 @@ ETAPAS = {
     "Principiante": ["PRE A1", "A1", "A1 PLUS", "A1 BASICO"],
     "Intermedia":   ["PRE B1", "B1", "B1 PLUS", "PRE B2", "B2", "B2 PLUS"],
     "Avanzada":     ["C1", "C2"],
+    "Curso de vacaciones": ["CVacaciones 1"],
 }
 
 

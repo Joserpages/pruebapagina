@@ -437,3 +437,34 @@ table.responsive td[data-th="Acciones"] {
 /* opcional: muestra una barra de scroll más visible en navegadores webkit */
 .table-wrap::-webkit-scrollbar { height: 10px; }
 .table-wrap::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+/* Ajustar tabla admin */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table-wrap table.responsive {
+  font-size: 14px;        /* texto más compacto */
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.table-wrap table.responsive th,
+.table-wrap table.responsive td {
+  padding: 6px 10px;       /* menos padding */
+  vertical-align: top;     /* alinear arriba */
+  white-space: normal;     /* permite salto de línea */
+  word-wrap: break-word;   /* corta palabras largas */
+  max-width: 180px;        /* ancho máximo por celda */
+}
+
+/* Encabezados */
+.table-wrap table.responsive th {
+  background: #f8fafc;
+  font-weight: 600;
+  text-align: left;
+}
+
+/* Fila alterna */
+.table-wrap table.responsive tr:nth-child(even) {
+  background: #f9f9f9;
+}

@@ -511,3 +511,52 @@ table.responsive td[data-th="Acciones"] {
   min-height: 32px;         /* altura fija pequeña */
   text-align: center;
 }
+/* Reducir el tamaño de la tabla */
+.table-wrap table.responsive {
+  font-size: 13px;          /* letras más pequeñas */
+}
+
+.table-wrap table.responsive th,
+.table-wrap table.responsive td {
+  padding: 6px 8px;         /* menos espacio dentro de cada celda */
+  line-height: 1.2;
+  vertical-align: middle;   /* centra el contenido verticalmente */
+  white-space: normal;      /* permite que el texto largo salte de línea */
+  word-break: break-word;   /* corta si el texto es muy largo */
+}
+
+/* Input + botón “Guardar” en vertical, más compacto */
+.inline-date-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.inline-date-form .input {
+  font-size: 12px;
+  padding: 4px 6px;
+  height: 28px;
+  width: 140px; /* más angosto */
+}
+
+.inline-date-form button {
+  font-size: 12px;
+  padding: 4px 6px;
+  height: 26px;
+}
+
+/* Columna Acciones en vertical */
+.row-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.row-actions .btn {
+  padding: 4px;
+  font-size: 12px;
+  min-width: 28px;
+  min-height: 28px;
+}

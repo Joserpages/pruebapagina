@@ -468,3 +468,17 @@ table.responsive td[data-th="Acciones"] {
 .table-wrap table.responsive tr:nth-child(even) {
   background: #f9f9f9;
 }
+.inline-date-form {
+  display: flex;
+  flex-direction: column; /* apila verticalmente */
+  gap: 4px;              /* espacio entre input y botón */
+}
+
+.inline-date-form input {
+  width: 100%;           /* que use todo el ancho */
+  max-width: 200px;
+}
+
+.inline-date-form button {
+  align-self: flex-start; /* botón alineado a la izquierda */
+}

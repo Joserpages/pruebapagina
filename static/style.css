@@ -482,3 +482,16 @@ table.responsive td[data-th="Acciones"] {
 .inline-date-form button {
   align-self: flex-start; /* botón alineado a la izquierda */
 }
+.row-actions {
+  display: flex;
+  gap: 6px;              /* espacio entre iconos */
+  align-items: center;
+}
+
+.row-actions .btn {
+  padding: 4px 6px;      /* botones más pequeños */
+  font-size: 12px;       /* íconos más compactos */
+  line-height: 1;        /* evita que se estiren */
+  border-radius: 6px;    /* opcional: esquinas más suaves */
+  min-width: auto;       /* no se expanden demasiado */
+}

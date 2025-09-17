@@ -95,7 +95,7 @@
         <th><a href="{{ url_for('admin', q=q, sort='estado', order=inv if sort=='estado' else 'asc', per_page=per_page, page=1) }}">Estado {% if sort=='estado' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}</a></th>
         <th><a href="{{ url_for('admin', q=q, sort='creado_en', order=inv if sort=='creado_en' else 'desc', per_page=per_page, page=1) }}">Creado {% if sort=='creado_en' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}</a></th>
         <th>Certificado</th>
-        <th>QR</th>
+        
         <th>Acciones</th>
       </tr>
     </thead>

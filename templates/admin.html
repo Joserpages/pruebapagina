@@ -126,12 +126,12 @@
         <td data-th="QR"><img src="{{ e.qr_url }}" alt="QR" class="qr-thumb" /></td>
         <td data-th="Acciones">
           <div class="row-actions">
-            <a class="btn btn-sm btn-primary" href="{{ url_for('editar_estudiante', id=e.id) }}">✏️ Editar</a>
+            <a class="btn btn-sm btn-primary" href="{{ url_for('editar_estudiante', id=e.id) }}">✏️</a>
             <form method="post" action="{{ url_for('regenerar_qr', token=e.token) }}">
-              <button class="btn btn-sm btn-secondary">🔄 Re-gen</button>
+              <button class="btn btn-sm btn-secondary">🔄</button>
             </form>
             <form method="post" action="{{ url_for('eliminar_estudiante', id=e.id) }}" class="delete-form">
-              <button type="button" class="btn danger delete-btn">Eliminar</button>
+              <button type="button" class="btn danger delete-btn">🗑️</button>
             </form>
           </div>
         </td>

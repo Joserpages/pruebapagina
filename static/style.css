@@ -663,3 +663,101 @@ table.responsive td[data-th="Acciones"] {
   font-size: 12px;
   line-height: 1;
 }
+/* ======= COMPACTO PERO LIMPIO (OVERRIDES) ======= */
+
+/* 1) Tipografía y padding más chicos */
+.table-wrap table.responsive { font-size: 13px; }
+.table-wrap table.responsive th,
+.table-wrap table.responsive td {
+  padding: 6px 8px;
+  vertical-align: middle;
+}
+
+/* 2) Anchos por columna (#, Nombre, Etapa/Nivel, Nota, Estado, Creado, Certificado, QR, Acciones) */
+.table-wrap table.responsive td:nth-child(1),
+.table-wrap table.responsive th:nth-child(1) { width: 36px;  text-align:center; }
+.table-wrap table.responsive td:nth-child(2),
+.table-wrap table.responsive th:nth-child(2) { width: 220px; }
+.table-wrap table.responsive td:nth-child(3),
+.table-wrap table.responsive th:nth-child(3) { width: 200px; }
+.table-wrap table.responsive td:nth-child(4),
+.table-wrap table.responsive th:nth-child(4) { width: 70px;  text-align: right; }
+.table-wrap table.responsive td:nth-child(5),
+.table-wrap table.responsive th:nth-child(5) { width: 110px; }
+.table-wrap table.responsive td:nth-child(6),
+.table-wrap table.responsive th:nth-child(6) { width: 190px; }
+.table-wrap table.responsive td:nth-child(7),
+.table-wrap table.responsive th:nth-child(7) { width: 80px;  text-align:center; }
+.table-wrap table.responsive td:nth-child(8),
+.table-wrap table.responsive th:nth-child(8) { width: 80px;  text-align:center; }
+.table-wrap table.responsive td:nth-child(9),
+.table-wrap table.responsive th:nth-child(9) { width: 78px;  text-align:center; }
+
+/* 3) Permitir 2 filas como máximo en Nombre y Etapa/Nivel (sin cortes feos) */
+.table-wrap table.responsive td:nth-child(2),
+.table-wrap table.responsive td:nth-child(3) {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.25;
+  overflow: hidden;
+  max-height: calc(1.25em * 2 + 2px); /* ~2 líneas */
+}
+
+/* Deshacer cualquier intento previo de line-clamp con webkit */
+.table-wrap table.responsive td:nth-child(2),
+.table-wrap table.responsive td:nth-child(3) {
+  -webkit-line-clamp: unset;
+  display: table-cell !important;
+  -webkit-box-orient: initial;
+}
+
+/* 4) Input fecha arriba y botón debajo, chicos */
+.inline-date-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+.inline-date-form input[type="datetime-local"]{
+  height: 30px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.inline-date-form .btn{
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 5) Acciones en VERTICAL y pequeños */
+.row-actions{
+  display: flex;
+  flex-direction: column;   /* vertical */
+  align-items: center;
+  gap: 6px;
+}
+.row-actions .btn{
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.row-actions .btn svg,
+.row-actions .btn img{
+  width: 14px;
+  height: 14px;
+}
+
+/* 6) En pantallas chicas, que el ancho se adapte mejor */
+@media (max-width: 1024px){
+  .table-wrap table.responsive { font-size: 12px; }
+  .table-wrap table.responsive td:nth-child(2),
+  .table-wrap table.responsive th:nth-child(2) { width: 190px; }
+  .table-wrap table.responsive td:nth-child(3),
+  .table-wrap table.responsive th:nth-child(3) { width: 170px; }
+  .table-wrap table.responsive td:nth-child(6),
+  .table-wrap table.responsive th:nth-child(6) { width: 180px; }
+}

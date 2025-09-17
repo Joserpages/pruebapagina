@@ -495,3 +495,19 @@ table.responsive td[data-th="Acciones"] {
   border-radius: 6px;    /* opcional: esquinas más suaves */
   min-width: auto;       /* no se expanden demasiado */
 }
+.row-actions {
+  display: flex;
+  flex-direction: column;   /* hace que se apilen en vertical */
+  gap: 4px;                 /* espacio pequeño entre botones */
+  align-items: center;      /* centra los íconos en la celda */
+}
+
+.row-actions .btn {
+  padding: 4px;             /* más pequeños */
+  font-size: 12px;          /* íconos compactos */
+  line-height: 1;
+  border-radius: 6px;
+  min-width: 32px;          /* ancho fijo pequeño */
+  min-height: 32px;         /* altura fija pequeña */
+  text-align: center;
+}

@@ -281,20 +281,56 @@ def init_db():
 
 def init_users():
     with conn() as c:
+        # Crear tabla usuarios con rol
         c.execute("""
         CREATE TABLE IF NOT EXISTS usuarios(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT UNIQUE NOT NULL,
           password_hash TEXT NOT NULL,
+          rol TEXT NOT NULL,
           creado_en TEXT NOT NULL
         )""")
-        n = c.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0]
-        if n == 0:
+
+        # Asegurar columna rol si la tabla ya existía
+        try:
+            c.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'admin'")
+        except Exception:
+            pass
+
+        # Verificar si ya existen usuarios
+        existentes = c.execute("SELECT username FROM usuarios").fetchall()
+        existentes = {u["username"] for u in existentes}
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # ADMIN FUERTE
+        if "rodasestuardo146@gmail.com" not in existentes:
             c.execute(
-                "INSERT INTO usuarios(username,password_hash,creado_en) VALUES(?,?,?)",
-                ("admin", generate_password_hash("admin123"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                """INSERT INTO usuarios(username,password_hash,rol,creado_en)
+                   VALUES(?,?,?,?)""",
+                (
+                    "rodasestuardo146@gmail.com",
+                    generate_password_hash("Admin123!@"),
+                    "admin",
+                    now
+                )
             )
-            print("➡ Usuario por defecto: admin / admin123")
+            print("✔ Admin fuerte creado")
+
+        # SUBADMIN
+        if "SubAdminAEA" not in existentes:
+            c.execute(
+                """INSERT INTO usuarios(username,password_hash,rol,creado_en)
+                   VALUES(?,?,?,?)""",
+                (
+                    "SubAdminAEA",
+                    generate_password_hash("SubAdminAEA@"),
+                    "subadmin",
+                    now
+                )
+            )
+            print("✔ Subadmin creado")
+
 
 
 def seed_if_empty():
@@ -368,10 +404,32 @@ def build_qr(token: str):
 def login_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
-        if not session.get("user"):
+        user = session.get("user")
+        if not user:
             return redirect(url_for("login", next=request.path))
         return view(*args, **kwargs)
     return wrapper
+
+
+def role_required(*roles):
+    def decorator(view):
+        @wraps(view)
+        def wrapper(*args, **kwargs):
+            user = session.get("user")
+
+            if not isinstance(user, dict):
+                session.clear()
+                flash("Sesión inválida. Inicia sesión nuevamente.", "error")
+                return redirect(url_for("login"))
+
+            if user.get("rol") not in roles:
+                flash("permiso_denegado", "modal")
+                return redirect(url_for("admin"))
+
+            return view(*args, **kwargs)
+        return wrapper
+    return decorator
+
 
 
 @app.context_processor
@@ -670,18 +728,32 @@ def login():
     if request.method == "POST":
         u = (request.form.get("username") or "").strip()
         p = (request.form.get("password") or "")
+
         if not u or not p:
             flash("Ingresa usuario y contraseña.", "error")
             return redirect(url_for("login"))
+
         with conn() as c:
-            row = c.execute("SELECT * FROM usuarios WHERE username=?", (u,)).fetchone()
+            row = c.execute(
+                "SELECT * FROM usuarios WHERE username=?",
+                (u,)
+            ).fetchone()
+
         if row and check_password_hash(row["password_hash"], p):
-            session["user"] = u
+            session["user"] = {
+                "username": row["username"],
+                "rol": row["rol"]
+            }
             flash("Bienvenido.", "ok")
             return redirect(request.args.get("next") or url_for("admin"))
+
+        # ❌ SOLO entra aquí si el login FALLA
         flash("Usuario o contraseña incorrectos.", "error")
         return redirect(url_for("login"))
+
     return render_template("login.html")
+
+
 @app.context_processor
 def inject_user():
     # current_user disponible en todas las plantillas
@@ -702,6 +774,7 @@ def logout():
 # =========================================
 @app.route("/admin", methods=["GET", "POST"])
 @login_required
+@role_required("admin", "subadmin")
 def admin():
     # -------- Crear nuevo estudiante (POST) --------
     if request.method == "POST":
@@ -817,6 +890,7 @@ def admin():
 
 @app.route("/admin/editar/<int:id>", methods=["GET","POST"])
 @login_required
+@role_required("admin", "subadmin")
 def editar_estudiante(id):
     with conn() as c:
         e = c.execute("SELECT * FROM estudiantes WHERE id=?", (id,)).fetchone()
@@ -864,6 +938,7 @@ def editar_estudiante(id):
     
 @app.route("/admin/eliminar/<int:id>", methods=["POST"])
 @login_required
+@role_required("admin")
 def eliminar_estudiante(id):
     with conn() as c:
         row = c.execute("SELECT token FROM estudiantes WHERE id=?", (id,)).fetchone()
@@ -879,6 +954,7 @@ def eliminar_estudiante(id):
 
 @app.route("/admin/regen/<token>", methods=["POST"])
 @login_required
+@role_required("admin")
 def regenerar_qr(token):
     build_qr(token)
     flash("QR re-generado.", "ok")
@@ -890,6 +966,7 @@ def regenerar_qr(token):
 # =========================================
 @app.route("/admin/export/csv")
 @login_required
+@role_required("admin")
 def export_csv():
     with conn() as c:
         rows = c.execute("""SELECT id, token, nombre, curso, nota, estado, creado_en
@@ -910,6 +987,7 @@ def export_csv():
 
 @app.route("/admin/export/xlsx")
 @login_required
+@role_required("admin")
 def export_xlsx():
     with conn() as c:
         rows = c.execute("""SELECT id, token, nombre, curso, nota, estado, creado_en
@@ -974,6 +1052,7 @@ def export_xlsx():
 # =========================================
 @app.route("/admin/import/xlsx", methods=["POST"])
 @login_required
+@role_required("admin")
 def import_xlsx():
     """
     Importa estudiantes desde .xlsx (no sensible a mayúsculas) con columnas:
@@ -1068,6 +1147,7 @@ def import_xlsx():
 
 @app.route("/admin/template/xlsx")
 @login_required
+@role_required("admin")
 def download_import_template():
     """Descarga una plantilla XLSX con columnas: nombre completo, etapa, nivel, nota, notas (link de Drive)."""
     wb = Workbook()
@@ -1106,6 +1186,7 @@ def download_import_template():
 
 @app.route("/admin/update-date/<int:id>", methods=["POST"])
 @login_required
+@role_required("admin")
 def update_fecha(id):
     creado_input = (request.form.get("creado_en") or "").strip()
     dt = _parse_datetime_local(creado_input)

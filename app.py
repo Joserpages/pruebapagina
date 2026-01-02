@@ -222,8 +222,9 @@ PASSING_GRADE = 60.0
 # =========================================
 ETAPAS = {
     "Principiante": ["PRE A1", "A1", "A1 PLUS", "A1 BASICO"],
+    "Pre Intermedia":   ["PRE A2", "A2", "A2 Plus"],
     "Intermedia":   ["PRE B1", "B1", "B1 PLUS", "PRE B2", "B2", "B2 PLUS"],
-    "Avanzada":     ["C1", "C2"],
+    "Avanzada":     ["PRE C1","C1""C1 PLUS", "PRE C2", "C2", "C2 PLUS"],
     "Curso de vacaciones": ["CVacaciones 1"],
 }
 

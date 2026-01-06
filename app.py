@@ -490,12 +490,8 @@ def validar():
     if request.method == "POST":
         # --- NUEVO: detección por texto en "nombre" ---
         nombre_trigger = (request.form.get("nombre") or "").strip()
-        # normalizamos (sin acentos y en minúsculas)
         trigger_norm = strip_accents_py(nombre_trigger).lower()
 
-
-
-        # Frases que disparan el login de admin
         ADMIN_TRIGGERS = {
             "iniciar como administrador",
             "iniciar como admin",
@@ -504,39 +500,57 @@ def validar():
         }
 
         if trigger_norm in ADMIN_TRIGGERS:
-            # los mandamos a /login y, al entrar, caerán en /admin
             return redirect(url_for("login", next=url_for("admin")))
         # ------------------------------------------------
 
         etapa = (request.form.get("etapa") or "").strip()
         nivel = (request.form.get("nivel") or "").strip()
+
+        # Normalizar etapa/nivel a los valores “canónicos”
         etapa = canonical_etapa(etapa)
         nivel = canonical_nivel(etapa, nivel)
+
         if not etapa or not nivel:
             flash("Selecciona etapa y nivel.", "error")
             return redirect(url_for("validar"))
 
-        nombre = nombre_trigger  # ya lo tenemos
+        nombre = nombre_trigger
         if not nombre:
             flash("Ingresa el nombre del estudiante.", "error")
             return redirect(url_for("validar"))
 
-        curso_text = f"{etapa} - {nivel}"
-        # Búsqueda tolerante a acentos
+        # Búsqueda tolerante a acentos (primero por NOMBRE)
         nombre_q = f"%{strip_accents_py(nombre).lower()}%"
-        curso_q  = f"%{strip_accents_py(curso_text).lower()}%"
 
         with conn() as cdb:
-            filas = cdb.execute(
+            rows = cdb.execute(
                 """
                 SELECT id, token, nombre, curso, nota, estado, creado_en
                 FROM estudiantes
                 WHERE lower(strip_accents(nombre)) LIKE ?
-                  AND lower(strip_accents(curso))  LIKE ?
                 ORDER BY nombre ASC, curso ASC
                 """,
-                (nombre_q, curso_q)
+                (nombre_q,)
             ).fetchall()
+
+        # ✅ Filtrado robusto por ETAPA/NIVEL (evita el problema Pre Intermedio vs Pre Intermedia)
+        filas = []
+        for r in rows:
+            curso_db = (r["curso"] or "").strip()
+
+            etapa_db, nivel_db = "", ""
+            if " - " in curso_db:
+                etapa_db, nivel_db = curso_db.split(" - ", 1)
+            else:
+                # fallback si algún registro viene raro
+                etapa_db = curso_db
+                nivel_db = ""
+
+            etapa_db = canonical_etapa(etapa_db.strip())
+            nivel_db = canonical_nivel(etapa_db, (nivel_db or "").strip())
+
+            if etapa_db == etapa and nivel_db == nivel:
+                filas.append(r)
 
         if not filas:
             flash("No se encontró un estudiante con esos datos.", "error")
@@ -554,11 +568,16 @@ def validar():
             "pdf_url":  url_for("cert_pdf",  token=r["token"])
         } for r in filas]
 
-        return render_template("validar.html",
-                               resultados=resultados,
-                               q_nombre=nombre, q_etapa=etapa, q_nivel=nivel)
+        return render_template(
+            "validar.html",
+            resultados=resultados,
+            q_nombre=nombre,
+            q_etapa=etapa,
+            q_nivel=nivel
+        )
 
     return render_template("validar.html")
+
 
 # =========================================
 # PDF – Diploma horizontal estilo AEA

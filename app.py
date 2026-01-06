@@ -43,7 +43,7 @@ from flask import Flask, render_template, request, redirect, url_for, abort, fla
 
 # ================== APP ÚNICA ==================
 # (No re-crear app más abajo; si necesitas añadir cosas, hazlo sobre esta misma instancia)
-app = Flask(__name__)
+#app = Flask(__name__)#
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret")  # cámbialo en prod
 
 # Ejecutar siempre al cargar el módulo (también bajo gunicorn)
@@ -207,7 +207,7 @@ LOGO_WATERMARK = (
     else os.path.join(BASE_DIR, "static", "img", "logo_marca_agua.png")
 )
 
-app = Flask(__name__)
+#app = Flask(__name__)#
 app.secret_key = "dev-secret"  # cambia en producción
 
 # Si sirves por LAN, usa tu IP local aquí para que el QR funcione
@@ -224,7 +224,7 @@ ETAPAS = {
     "Principiante": ["PRE A1", "A1", "A1 PLUS", "A1 BASICO"],
     "Pre Intermedia":   ["PRE A2", "A2", "A2 Plus"],
     "Intermedia":   ["PRE B1", "B1", "B1 PLUS", "PRE B2", "B2", "B2 PLUS"],
-    "Avanzada":     ["PRE C1","C1""C1 PLUS", "PRE C2", "C2", "C2 PLUS"],
+    "Avanzada":     ["PRE C1","C1","C1 PLUS", "PRE C2", "C2", "C2 PLUS"],
     "Curso de vacaciones": ["CVacaciones 1"],
 }
 
@@ -235,8 +235,10 @@ def _norm_key(s: str) -> str:
 ETAPA_ALIASES = {
     "preintermedio": "Pre Intermedia",
     "preintermedia": "Pre Intermedia",
+    "preintermediaa": "Pre Intermedia",
     "preintermediate": "Pre Intermedia",
 }
+
 
 def canonical_etapa(etapa: str) -> str:
     n = _norm_key(etapa)
@@ -488,7 +490,7 @@ def index():
 @app.route("/validar", methods=["GET", "POST"])
 def validar():
     if request.method == "POST":
-        # --- NUEVO: detección por texto en "nombre" ---
+        # --- detección por texto en "nombre" ---
         nombre_trigger = (request.form.get("nombre") or "").strip()
         trigger_norm = strip_accents_py(nombre_trigger).lower()
 
@@ -498,7 +500,6 @@ def validar():
             "admin",
             "administrador"
         }
-
         if trigger_norm in ADMIN_TRIGGERS:
             return redirect(url_for("login", next=url_for("admin")))
         # ------------------------------------------------
@@ -506,7 +507,7 @@ def validar():
         etapa = (request.form.get("etapa") or "").strip()
         nivel = (request.form.get("nivel") or "").strip()
 
-        # Normalizar etapa/nivel a los valores “canónicos”
+        # Normalizar etapa/nivel a “canónico”
         etapa = canonical_etapa(etapa)
         nivel = canonical_nivel(etapa, nivel)
 
@@ -519,7 +520,7 @@ def validar():
             flash("Ingresa el nombre del estudiante.", "error")
             return redirect(url_for("validar"))
 
-        # Búsqueda tolerante a acentos (primero por NOMBRE)
+        # 1) Buscar por nombre (tolerante a acentos)
         nombre_q = f"%{strip_accents_py(nombre).lower()}%"
 
         with conn() as cdb:
@@ -533,7 +534,10 @@ def validar():
                 (nombre_q,)
             ).fetchall()
 
-        # ✅ Filtrado robusto por ETAPA/NIVEL (evita el problema Pre Intermedio vs Pre Intermedia)
+        # 2) Filtrar por etapa/nivel de forma ROBUSTA (comparando normalizados)
+        etapa_key = _norm_key(etapa)
+        nivel_key = _norm_key(nivel)
+
         filas = []
         for r in rows:
             curso_db = (r["curso"] or "").strip()
@@ -542,14 +546,14 @@ def validar():
             if " - " in curso_db:
                 etapa_db, nivel_db = curso_db.split(" - ", 1)
             else:
-                # fallback si algún registro viene raro
                 etapa_db = curso_db
                 nivel_db = ""
 
+            # Canonizar y comparar por clave normalizada
             etapa_db = canonical_etapa(etapa_db.strip())
             nivel_db = canonical_nivel(etapa_db, (nivel_db or "").strip())
 
-            if etapa_db == etapa and nivel_db == nivel:
+            if _norm_key(etapa_db) == etapa_key and _norm_key(nivel_db) == nivel_key:
                 filas.append(r)
 
         if not filas:
@@ -577,7 +581,6 @@ def validar():
         )
 
     return render_template("validar.html")
-
 
 # =========================================
 # PDF – Diploma horizontal estilo AEA

@@ -228,6 +228,35 @@ ETAPAS = {
     "Curso de vacaciones": ["CVacaciones 1"],
 }
 
+def _norm_key(s: str) -> str:
+    return strip_accents_py(s or "").lower().replace(" ", "").replace("_", "").replace("-", "")
+
+# Aliases opcionales (por si vienen variaciones raras)
+ETAPA_ALIASES = {
+    "preintermedio": "Pre Intermedia",
+    "preintermedia": "Pre Intermedia",
+    "preintermediate": "Pre Intermedia",
+}
+
+def canonical_etapa(etapa: str) -> str:
+    n = _norm_key(etapa)
+    # 1) si coincide con una key real de ETAPAS (aunque venga con distinto formato)
+    for k in ETAPAS.keys():
+        if _norm_key(k) == n:
+            return k
+    # 2) si viene en alias
+    if n in ETAPA_ALIASES:
+        return ETAPA_ALIASES[n]
+    # 3) si no, devolvemos tal cual
+    return etapa
+
+def canonical_nivel(etapa_canon: str, nivel: str) -> str:
+    n = _norm_key(nivel)
+    opciones = ETAPAS.get(etapa_canon, []) or []
+    for opt in opciones:
+        if _norm_key(opt) == n:
+            return opt
+    return nivel
 
 # =========================================
 # Helpers (acentos / DB)
@@ -258,24 +287,23 @@ def init_db():
           estado  TEXT CHECK(estado IN ('Aprobado','Reprobado')) NOT NULL,
           creado_en TEXT NOT NULL
         )""")
-        # Añadir columna 'notas' si no existe
+
+        # notas
         try:
             c.execute("ALTER TABLE estudiantes ADD COLUMN notas TEXT")
         except Exception:
-            pass  # ya existe
+            pass
 
-        # (Compat) si alguna vez usaste 'columna', copia su contenido a 'notas'
+        # ✅ NUEVO: programa/curso general
         try:
-            c.execute("""
-              UPDATE estudiantes
-                 SET notas = CASE
-                               WHEN (notas IS NULL OR notas = '')
-                               THEN COALESCE(columna, notas)
-                               ELSE notas
-                             END
-            """)
+            c.execute("ALTER TABLE estudiantes ADD COLUMN programa TEXT")
         except Exception:
-            # Si 'columna' nunca existió, no pasa nada
+            pass
+
+        # ✅ poner valor por defecto a los viejos
+        try:
+            c.execute("UPDATE estudiantes SET programa='AEA' WHERE programa IS NULL OR programa=''")
+        except Exception:
             pass
 
 
@@ -465,6 +493,8 @@ def validar():
         # normalizamos (sin acentos y en minúsculas)
         trigger_norm = strip_accents_py(nombre_trigger).lower()
 
+
+
         # Frases que disparan el login de admin
         ADMIN_TRIGGERS = {
             "iniciar como administrador",
@@ -480,6 +510,8 @@ def validar():
 
         etapa = (request.form.get("etapa") or "").strip()
         nivel = (request.form.get("nivel") or "").strip()
+        etapa = canonical_etapa(etapa)
+        nivel = canonical_nivel(etapa, nivel)
         if not etapa or not nivel:
             flash("Selecciona etapa y nivel.", "error")
             return redirect(url_for("validar"))
@@ -782,6 +814,8 @@ def admin():
         nombre = (request.form.get("nombre") or "").strip()
         etapa  = (request.form.get("etapa")  or "").strip()
         nivel  = (request.form.get("nivel")  or "").strip()
+        etapa = canonical_etapa(etapa)
+        nivel = canonical_nivel(etapa, nivel)
         nota_s = (request.form.get("nota")   or "").strip()
         notas_url = (request.form.get("notas") or "").strip()   # <-- NUEVO
         if not (nombre and etapa and nivel and nota_s):
@@ -902,6 +936,8 @@ def editar_estudiante(id):
         nombre = (request.form.get("nombre") or "").strip()
         etapa  = (request.form.get("etapa")  or "").strip()
         nivel  = (request.form.get("nivel")  or "").strip()
+        etapa = canonical_etapa(etapa)
+        nivel = canonical_nivel(etapa, nivel)
         nota_s = (request.form.get("nota")   or "").strip()
         notas_url = (request.form.get("notas") or "").strip()   # <-- NUEVO
         if not (nombre and etapa and nivel and nota_s):

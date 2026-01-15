@@ -349,7 +349,7 @@ table.compact-table td, table.compact-table th{
 
     <button class="btn btn-primary" id="bulkDownloadBtn" disabled>Descargar certificados (ZIP)</button>
 
-    <!-- ✅ NUEVO: seleccionar TODOS los del filtro (aunque haya paginación) -->
+    <!-- ✅ Seleccionar SOLO 200 del filtro -->
     <button class="btn" id="selectAllFilteredBtn" type="button">Seleccionar TODO (filtro)</button>
 
     <button class="btn" id="clearSelectionBtn" type="button">Limpiar selección</button>
@@ -526,7 +526,7 @@ table.compact-table td, table.compact-table th{
   const MAPA = JSON.parse(document.getElementById('mapa-data').textContent);
 
   function fillNiveles(etapa, selectEl, placeholder){
-    const prev = selectEl.value; // intenta mantener selección si coincide
+    const prev = selectEl.value;
     selectEl.innerHTML = `<option value="">${placeholder}</option>`;
     (MAPA[etapa] || []).forEach(n=>{
       const o = document.createElement('option');
@@ -553,10 +553,10 @@ table.compact-table td, table.compact-table th{
   }
 
   // ==========================================================
-  // ✅ SELECCIÓN GLOBAL + ZIP
-  // - mantiene selección aunque cambies de página
-  // - "Seleccionar TODO (filtro)" trae todos los IDs (sin paginar)
+  // ✅ SELECCIÓN GLOBAL + ZIP (LIMITADO A 200)
   // ==========================================================
+  const MAX_SELECT = 200;
+
   const checkAll = document.getElementById('check_all');
   const selectedCountEl = document.getElementById('selectedCount');
   const bulkBtn = document.getElementById('bulkDownloadBtn');
@@ -583,22 +583,56 @@ table.compact-table td, table.compact-table th{
     checkAll.indeterminate = (visibleChecked > 0 && !allChecked);
   }
 
+  function trimSelectedToLimit(){
+    if (Selected.size <= MAX_SELECT) return;
+    const first = Array.from(Selected).slice(0, MAX_SELECT);
+    Selected.clear();
+    first.forEach(id => Selected.add(id));
+  }
+
+  // Check all (visibles) con límite
   checkAll?.addEventListener('change', ()=>{
     const checked = checkAll.checked;
-    rowChecks().forEach(c=>{
-      c.checked = checked;
-      const id = String(c.value);
-      if (checked) Selected.add(id);
-      else Selected.delete(id);
-    });
+
+    if (checked){
+      for (const c of rowChecks()){
+        if (Selected.size >= MAX_SELECT) break;
+        c.checked = true;
+        Selected.add(String(c.value));
+      }
+      // desmarca visibles que no entraron en el límite
+      rowChecks().forEach(c=>{
+        if (!Selected.has(String(c.value))) c.checked = false;
+      });
+      if (Selected.size >= MAX_SELECT){
+        alert(`Máximo ${MAX_SELECT} seleccionados. Si necesitas más, descárgalos por partes.`);
+      }
+    } else {
+      rowChecks().forEach(c=>{
+        c.checked = false;
+        Selected.delete(String(c.value));
+      });
+    }
+
     refreshSelectedUI();
   });
 
+  // Click individual con límite
   document.addEventListener('change', (e)=>{
     if (e.target && e.target.classList.contains('row-check')){
       const id = String(e.target.value);
-      if (e.target.checked) Selected.add(id);
-      else Selected.delete(id);
+
+      if (e.target.checked){
+        if (Selected.size >= MAX_SELECT){
+          e.target.checked = false;
+          alert(`Solo puedes seleccionar hasta ${MAX_SELECT} alumnos por ZIP. Descarga por partes.`);
+          return;
+        }
+        Selected.add(id);
+      } else {
+        Selected.delete(id);
+      }
+
       refreshSelectedUI();
     }
   });
@@ -609,10 +643,13 @@ table.compact-table td, table.compact-table th{
     refreshSelectedUI();
   });
 
+  // Descargar ZIP (nunca manda más de 200)
   bulkBtn?.addEventListener('click', (ev)=>{
     ev.preventDefault();
-    bulkForm.innerHTML = "";
 
+    trimSelectedToLimit();
+
+    bulkForm.innerHTML = "";
     const ids = Array.from(Selected);
     if (!ids.length) return;
 
@@ -628,26 +665,39 @@ table.compact-table td, table.compact-table th{
   });
 
   async function fetchAllIdsForCurrentFilters(){
-    // Ruta que debes tener en app.py: /admin/ids => endpoint "admin_ids"
     const url = new URL("{{ url_for('admin_ids') }}", window.location.origin);
     const qs = new URLSearchParams(window.location.search);
     qs.forEach((v,k)=> url.searchParams.set(k,v));
 
     const res = await fetch(url.toString(), { credentials: "same-origin" });
     const data = await res.json();
-    return (data && data.ids) ? data.ids.map(String) : [];
+    const ids = (data && data.ids) ? data.ids.map(String) : [];
+    const total = (data && typeof data.count === "number") ? data.count : ids.length;
+    return { ids, total };
   }
 
+  // Seleccionar TODO (filtro) pero solo 200
   selectAllFilteredBtn?.addEventListener('click', async ()=>{
     selectAllFilteredBtn.disabled = true;
     const oldText = selectAllFilteredBtn.textContent;
     selectAllFilteredBtn.textContent = "Seleccionando...";
 
     try{
-      const ids = await fetchAllIdsForCurrentFilters();
-      ids.forEach(id => Selected.add(id));
+      const { ids, total } = await fetchAllIdsForCurrentFilters();
+
+      const limited = ids.slice(0, MAX_SELECT);
+
+      Selected.clear();
+      limited.forEach(id => Selected.add(id));
+
       syncVisibleCheckboxes();
       refreshSelectedUI();
+
+      if (total > MAX_SELECT){
+        alert(`Se seleccionaron ${MAX_SELECT} de ${total} alumnos (máximo por ZIP). Descarga por partes.`);
+      } else {
+        alert(`Se seleccionaron ${limited.length} alumnos.`);
+      }
     }catch(e){
       console.error(e);
       alert("No se pudieron obtener los IDs del filtro. Revisa que exista la ruta /admin/ids en app.py.");

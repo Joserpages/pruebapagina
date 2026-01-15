@@ -274,7 +274,9 @@ def conn():
     c = sqlite3.connect(DB_PATH)
     c.row_factory = sqlite3.Row
     c.create_function("strip_accents", 1, strip_accents_py)
+    c.create_function("norm_key", 1, _norm_key)  # ✅ NUEVO: normaliza igual que en Python
     return c
+
 
 
 def init_db():
@@ -841,10 +843,11 @@ def admin():
         nombre = (request.form.get("nombre") or "").strip()
         etapa  = (request.form.get("etapa")  or "").strip()
         nivel  = (request.form.get("nivel")  or "").strip()
+
         etapa = canonical_etapa(etapa)
         nivel = canonical_nivel(etapa, nivel)
 
-        nota_s = (request.form.get("nota")   or "").strip()
+        nota_s = (request.form.get("nota") or "").strip()
         notas_url = (request.form.get("notas") or "").strip()
 
         if not (nombre and etapa and nivel and nota_s):
@@ -862,7 +865,10 @@ def admin():
             return redirect(url_for("admin"))
 
         estado = "Aprobado" if nota >= PASSING_GRADE else "Reprobado"
+
+        # ✅ SIEMPRE guardamos con separador estándar
         curso_text = f"{etapa} - {nivel}"
+
         token  = uuid.uuid4().hex
         creado = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -877,14 +883,18 @@ def admin():
         return redirect(url_for("admin"))
 
     # -------- Listado, filtros y paginación (GET) --------
-    q        = (request.args.get("q") or "").strip()
+    q = (request.args.get("q") or "").strip()
 
-    etapa_filtro  = canonical_etapa((request.args.get("etapa") or "").strip()) if (request.args.get("etapa") or "").strip() else ""
-    nivel_filtro  = (request.args.get("nivel") or "").strip()
-    estado_filtro = (request.args.get("estado") or "").strip()
+    etapa_filtro_raw = (request.args.get("etapa") or "").strip()
+    nivel_filtro_raw = (request.args.get("nivel") or "").strip()
+    estado_filtro    = (request.args.get("estado") or "").strip()
 
     nota_min_s = (request.args.get("nota_min") or "").strip()
     nota_max_s = (request.args.get("nota_max") or "").strip()
+
+    # ✅ NUEVO: fechas emitidas
+    fecha_desde = (request.args.get("desde") or "").strip()  # YYYY-MM-DD
+    fecha_hasta = (request.args.get("hasta") or "").strip()  # YYYY-MM-DD
 
     sort     = (request.args.get("sort") or "creado_en").strip()
     order    = (request.args.get("order") or "desc").lower()
@@ -901,56 +911,70 @@ def admin():
     if page < 1:
         page = 1
 
-    # niveles a mostrar en el select según etapa seleccionada
+    # Canonizar etapa/nivel
+    etapa_filtro = canonical_etapa(etapa_filtro_raw) if etapa_filtro_raw else ""
+    nivel_filtro = nivel_filtro_raw.strip()
+    if etapa_filtro and nivel_filtro:
+        nivel_filtro = canonical_nivel(etapa_filtro, nivel_filtro)
+
     niveles_filtro = ETAPAS.get(etapa_filtro, []) if etapa_filtro else []
 
     where_parts = ["1=1"]
     params = []
 
-    # Búsqueda tolerante a acentos
+    # ✅ EXPRESIONES SQL robustas:
+    # Partimos por "-" (sin importar espacios alrededor)
+    etapa_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,1,instr(curso,'-')-1) ELSE curso END)"
+    nivel_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,instr(curso,'-')+1) ELSE '' END)"
+
+    # ✅ Búsqueda tolerante a acentos
     if q:
         q_norm = f"%{strip_accents_py(q).lower()}%"
-        where_parts.append(" (lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?) ")
+        where_parts.append("(lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?)")
         params.extend([q_norm, q_norm, f"%{q}%"])
 
-    # Filtro por etapa/nivel: como guardas curso = "Etapa - Nivel"
+    # ✅ Filtro etapa EXACTO robusto
     if etapa_filtro:
-        where_parts.append(" curso LIKE ? ")
-        params.append(f"{etapa_filtro} - %")
+        where_parts.append(f"norm_key({etapa_expr}) = ?")
+        params.append(_norm_key(etapa_filtro))
 
+    # ✅ Filtro nivel EXACTO robusto
     if nivel_filtro:
-        # Asegura canonical nivel SOLO si hay etapa (para evitar mismatch)
-        if etapa_filtro:
-            nivel_filtro = canonical_nivel(etapa_filtro, nivel_filtro)
-        where_parts.append(" curso = ? ")
-        # si hay etapa, construye el curso completo:
-        if etapa_filtro:
-            params.append(f"{etapa_filtro} - {nivel_filtro}")
-        else:
-            # si no hay etapa, igual intentamos buscar por texto (fallback)
-            where_parts.append(" lower(strip_accents(curso)) LIKE ? ")
-            params.append(f"%{strip_accents_py(nivel_filtro).lower()}%")
+        where_parts.append(f"norm_key({nivel_expr}) = ?")
+        params.append(_norm_key(nivel_filtro))
 
-    if estado_filtro:
-        where_parts.append(" estado = ? ")
+    # ✅ Estado
+    if estado_filtro and estado_filtro.lower() != "todos":
+        if estado_filtro not in ("Aprobado", "Reprobado"):
+            estado_filtro = "Aprobado" if estado_filtro.lower().startswith("apro") else "Reprobado"
+        where_parts.append("estado = ?")
         params.append(estado_filtro)
 
-    # rango de nota
-    try:
-        if nota_min_s != "":
-            nota_min = float(nota_min_s)
-            where_parts.append(" nota >= ? ")
-            params.append(nota_min)
-    except Exception:
-        pass
+    # ✅ rango de nota
+    def _to_float(s):
+        try:
+            return float(s)
+        except Exception:
+            return None
 
-    try:
-        if nota_max_s != "":
-            nota_max = float(nota_max_s)
-            where_parts.append(" nota <= ? ")
-            params.append(nota_max)
-    except Exception:
-        pass
+    nmin = _to_float(nota_min_s) if nota_min_s != "" else None
+    nmax = _to_float(nota_max_s) if nota_max_s != "" else None
+
+    if nmin is not None:
+        where_parts.append("nota >= ?")
+        params.append(nmin)
+    if nmax is not None:
+        where_parts.append("nota <= ?")
+        params.append(nmax)
+
+    # ✅ filtro por fechas emitidas
+    # creado_en es TEXT "YYYY-MM-DD HH:MM:SS"
+    if fecha_desde:
+        where_parts.append("date(creado_en) >= date(?)")
+        params.append(fecha_desde)
+    if fecha_hasta:
+        where_parts.append("date(creado_en) <= date(?)")
+        params.append(fecha_hasta)
 
     where = " AND ".join(where_parts)
 
@@ -993,6 +1017,10 @@ def admin():
         nota_min=nota_min_s,
         nota_max=nota_max_s,
 
+        # ✅ por si quieres usarlos directo en template
+        desde=fecha_desde,
+        hasta=fecha_hasta,
+
         sort=sort,
         order=order,
         page=page,
@@ -1001,6 +1029,82 @@ def admin():
         total_pages=total_pages,
         pages=pages,
     )
+
+from flask import jsonify
+
+@app.route("/admin/ids", methods=["GET"])
+@login_required
+@role_required("admin", "subadmin")
+def admin_ids():
+    q = (request.args.get("q") or "").strip()
+
+    etapa_filtro_raw = (request.args.get("etapa") or "").strip()
+    nivel_filtro_raw = (request.args.get("nivel") or "").strip()
+    estado_filtro    = (request.args.get("estado") or "").strip()
+
+    nota_min_s = (request.args.get("nota_min") or "").strip()
+    nota_max_s = (request.args.get("nota_max") or "").strip()
+
+    fecha_desde = (request.args.get("desde") or "").strip()  # YYYY-MM-DD
+    fecha_hasta = (request.args.get("hasta") or "").strip()  # YYYY-MM-DD
+
+    etapa_filtro = canonical_etapa(etapa_filtro_raw) if etapa_filtro_raw else ""
+    nivel_filtro = nivel_filtro_raw.strip()
+    if etapa_filtro and nivel_filtro:
+        nivel_filtro = canonical_nivel(etapa_filtro, nivel_filtro)
+
+    where_parts = ["1=1"]
+    params = []
+
+    # ✅ robusto por "-"
+    etapa_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,1,instr(curso,'-')-1) ELSE curso END)"
+    nivel_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,instr(curso,'-')+1) ELSE '' END)"
+
+    if q:
+        q_norm = f"%{strip_accents_py(q).lower()}%"
+        where_parts.append("(lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?)")
+        params.extend([q_norm, q_norm, f"%{q}%"])
+
+    if etapa_filtro:
+        where_parts.append(f"norm_key({etapa_expr}) = ?")
+        params.append(_norm_key(etapa_filtro))
+
+    if nivel_filtro:
+        where_parts.append(f"norm_key({nivel_expr}) = ?")
+        params.append(_norm_key(nivel_filtro))
+
+    if estado_filtro and estado_filtro.lower() != "todos":
+        if estado_filtro not in ("Aprobado", "Reprobado"):
+            estado_filtro = "Aprobado" if estado_filtro.lower().startswith("apro") else "Reprobado"
+        where_parts.append("estado = ?")
+        params.append(estado_filtro)
+
+    def _to_float(s):
+        try: return float(s)
+        except: return None
+
+    nmin = _to_float(nota_min_s) if nota_min_s != "" else None
+    nmax = _to_float(nota_max_s) if nota_max_s != "" else None
+    if nmin is not None:
+        where_parts.append("nota >= ?"); params.append(nmin)
+    if nmax is not None:
+        where_parts.append("nota <= ?"); params.append(nmax)
+
+    # ✅ fechas
+    if fecha_desde:
+        where_parts.append("date(creado_en) >= date(?)")
+        params.append(fecha_desde)
+    if fecha_hasta:
+        where_parts.append("date(creado_en) <= date(?)")
+        params.append(fecha_hasta)
+
+    where = " AND ".join(where_parts)
+
+    with conn() as c:
+        ids = [str(r["id"]) for r in c.execute(f"SELECT id FROM estudiantes WHERE {where}", params).fetchall()]
+
+    return jsonify({"ids": ids, "count": len(ids)})
+
 
 
 @app.route("/admin/editar/<int:id>", methods=["GET","POST"])

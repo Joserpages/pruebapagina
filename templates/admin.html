@@ -1,190 +1,567 @@
-﻿{% extends "base.html" %}
-{% block title %}Administración{% endblock %}
-{% block content %}
+﻿  <!-- templates/admin.html -->
+  {% extends "base.html" %}
+  {% block title %}Administración{% endblock %}
 
-<h2 style="margin:10px 0 14px 0;">Administración</h2>
+  {# SOLO ADMIN: activa estilos full width en base.html #}
+  {% block body_class %}page-admin{% endblock %}
 
-<form class="card form" method="post" style="padding:16px;">
-  <div class="grid two">
-    <label class="field">
-      <span>Nombre completo</span>
-      <input name="nombre" placeholder="Ej. Ana Pérez" required />
-    </label>
+  {% block content %}
 
-    <label class="field">
-      <span>Etapa</span>
-      <select name="etapa" id="etapa_new" required>
-        <option value="">Selecciona etapa</option>
-        {% for e in ETAPAS.keys() %}
-          <option value="{{ e }}">{{ e }}</option>
-        {% endfor %}
-      </select>
-    </label>
+  <h2 style="margin:10px 0 14px 0;">Administración</h2>
 
-    <label class="field">
-      <span>Nivel</span>
-      <select name="nivel" id="nivel_new" required>
-        <option value="">Selecciona nivel</option>
-      </select>
-    </label>
+  <style>
+  /* ==========================================================
+    SOLO ADMIN: ocupar TODO el ancho (sin huecos)
+    - tu base usa .container (con max-width)
+    - aquí lo anulamos SOLO si body tiene .page-admin
+  ========================================================== */
+  .page-admin .container{
+    width: 100% !important;
+    max-width: 100% !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+  .page-admin main{ width: 100% !important; }
 
-    <label class="field">
-      <span>Nota</span>
-      <input name="nota" type="number" step="0.01" min="0" max="100" placeholder="0–100" required />
-    </label>
-  </div>
-  <div class="help">
-    El estado se calcula automáticamente (Aprobado si nota ≥ {{ PASSING_GRADE }}).
-  </div>
-
-  <div class="field">
-    <span>Notas (link de Drive) <small style="color:#6b7280;font-weight:400">(opcional)</small></span>
-    <input class="input" type="url" name="notas" placeholder="https://drive.google.com/..." />
-  </div>
-
-  <div class="btns">
-    <button class="btn btn-primary">Guardar y generar QR</button>
-    <a href="{{ url_for('export_csv') }}" class="btn">Exportar CSV</a>
-    <a href="{{ url_for('export_xlsx') }}" class="btn">Exportar Excel (.xlsx)</a>
-  </div>
-</form>
-
-<form class="card" method="post" action="{{ url_for('import_xlsx') }}" enctype="multipart/form-data" style="padding:12px;margin:12px 0;">
-  <div class="grid two">
-    <div>
-      <label class="field">
-        <span>Importar estudiantes (.xlsx)</span>
-        <input type="file" name="archivo" accept=".xlsx" required>
-      </label>
-      <small class="help">
-        El archivo debe tener columnas: <code>nombre</code>, <code>etapa</code>, <code>nivel</code>, <code>nota</code>, <code>notas</code> (link de Drive).
-      </small>
-    </div>
-    <div style="align-self:end;">
-      <button class="btn btn-primary">Importar XLSX</button>
-      <a class="btn" href="{{ url_for('download_import_template') }}">Descargar plantilla</a>
-    </div>
-  </div>
-</form>
-
-<form method="get" action="{{ url_for('admin') }}" class="card" style="padding:12px;margin:12px 0;">
-  <div class="toolbar">
-    <input class="input" name="q" value="{{ q or '' }}" placeholder="Buscar por nombre, etapa/nivel o token…" />
-    <select class="input" name="per_page" onchange="this.form.submit()">
-      <option value="10"  {{ 'selected' if per_page==10 else '' }}>10</option>
-      <option value="25"  {{ 'selected' if per_page==25 else '' }}>25</option>
-      <option value="50"  {{ 'selected' if per_page==50 else '' }}>50</option>
-      <option value="100" {{ 'selected' if per_page==100 else '' }}>100</option>
-    </select>
-    <input type="hidden" name="sort" value="{{ sort }}">
-    <input type="hidden" name="order" value="{{ order }}">
-    <button class="btn btn-primary">Filtrar</button>
-  </div>
-</form>
-
-<div class="table-wrap">
-  <table class="responsive compact-table">
-    <thead>
-      {% set inv = 'asc' if order == 'desc' else 'desc' %}
-      <tr>
-        <th>#</th>
-        <th><a href="{{ url_for('admin', q=q, sort='nombre', order=inv if sort=='nombre' else 'asc', per_page=per_page, page=1) }}">Nombre {% if sort=='nombre' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}</a></th>
-        <th><a href="{{ url_for('admin', q=q, sort='curso', order=inv if sort=='curso' else 'asc', per_page=per_page, page=1) }}">Etapa / Nivel {% if sort=='curso' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}</a></th>
-        <th><a href="{{ url_for('admin', q=q, sort='nota', order=inv if sort=='nota' else 'asc', per_page=per_page, page=1) }}">Nota {% if sort=='nota' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}</a></th>
-        <th><a href="{{ url_for('admin', q=q, sort='estado', order=inv if sort=='estado' else 'asc', per_page=per_page, page=1) }}">Estado {% if sort=='estado' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}</a></th>
-        <th><a href="{{ url_for('admin', q=q, sort='creado_en', order=inv if sort=='creado_en' else 'desc', per_page=per_page, page=1) }}">Creado {% if sort=='creado_en' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}</a></th>
-        <th>Certificado</th>
-        <th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for e in estudiantes %}
-      <tr>
-        <td class="text-muted">{{ (page - 1) * per_page + loop.index }}</td>
-        <td data-th="Nombre">{{ e.nombre }}</td>
-        <td data-th="Etapa / Nivel">{{ e.curso }}</td>
-        <td data-th="Nota">{{ '%.2f'|format(e.nota) }}</td>
-        <td data-th="Estado" class="{{ 'ok' if e.estado=='Aprobado' else 'bad' }}">{{ e.estado }}</td>
-
-        <td data-th="Creado">
-          <form method="post" action="{{ url_for('update_fecha', id=e.id) }}" class="inline-date-form">
-            <input type="datetime-local" name="creado_en" value="{{ e.creado_en|dtlocal }}" class="input">
-            <button class="btn btn-sm">Guardar</button>
-          </form>
-        </td>
-
-        <td data-th="Certificado"><a class="btn btn-outline" href="{{ e.cert_url }}" target="_blank">Ver</a></td>
-        
-        <td data-th="Acciones">
-          <div class="row-actions">
-            <a class="btn btn-sm btn-primary" href="{{ url_for('editar_estudiante', id=e.id) }}">✏️</a>
-            <form method="post" action="{{ url_for('regenerar_qr', token=e.token) }}">
-              <button class="btn btn-sm btn-secondary">🔄</button>
-            </form>
-            <form method="post" action="{{ url_for('eliminar_estudiante', id=e.id) }}" class="delete-form">
-              <button type="button" class="btn danger delete-btn">🗑️</button>
-            </form>
-          </div>
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="9" style="text-align:center;">Sin registros</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-
-<nav>
-  <ul class="pagination">
-    <li class="page-item {{ 'disabled' if page<=1 }}">
-      <a class="page-link" href="{{ url_for('admin', q=q, sort=sort, order=order, page=page-1, per_page=per_page) }}">Anterior</a>
-    </li>
-    {% for p in pages %}
-    <li class="page-item {{ 'active' if p==page }}">
-      <a class="page-link" href="{{ url_for('admin', q=q, sort=sort, order=order, page=p, per_page=per_page) }}">{{ p }}</a>
-    </li>
-    {% endfor %}
-    <li class="page-item {{ 'disabled' if page>=total_pages }}">
-      <a class="page-link" href="{{ url_for('admin', q=q, sort=sort, order=order, page=page+1, per_page=per_page) }}">Siguiente</a>
-    </li>
-  </ul>
-</nav>
-
-<script id="mapa-data" type="application/json">{{ ETAPAS|tojson }}</script>
-<script>
-  const MAPA = JSON.parse(document.getElementById('mapa-data').textContent);
-  const etapaSel = document.getElementById('etapa_new');
-  const nivelSel = document.getElementById('nivel_new');
-
-  function fillNiveles(etapa, selectEl){
-    selectEl.innerHTML = '<option value="">Selecciona nivel</option>';
-    (MAPA[etapa] || []).forEach(n=>{
-      const o = document.createElement('option');
-      o.value = n; o.textContent = n;
-      selectEl.appendChild(o);
-    });
+  /* ==========================================================
+    TABLA ADMIN (PC)
+  ========================================================== */
+  .table-wrap{
+    width:100%;
+    overflow-x: hidden;     /* PC: no queremos scroll ni huecos */
+    border-radius:14px;
   }
 
-  etapaSel.addEventListener('change', ()=> fillNiveles(etapaSel.value, nivelSel));
-</script>
+  /* tabla a TODO lo ancho */
+  table.compact-table{
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;        /* quita el min-width que te causaba huecos/scroll */
+    table-layout: auto !important; /* clave: que se distribuya natural y llene */
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 15px;
+  }
 
-<!-- ================= PERMISO DENEGADO ================= -->
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  /* headers */
+  table.compact-table thead th{
+    padding: 14px 12px !important;
+    font-size: 14px;
+    font-weight: 900;
+    white-space: nowrap;
+  }
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-  {% for category, message in messages %}
-    {% if category == "modal" and message == "permiso_denegado" %}
-      <script>
-        Swal.fire({
-          icon: 'warning',
-          title: 'Permiso denegado',
-          text: 'No tienes autorización para realizar esta acción.',
-          confirmButtonText: 'Continuar',
-          confirmButtonColor: '#3085d6'
-        });
-      </script>
-    {% endif %}
-  {% endfor %}
-{% endwith %}
+  /* celdas */
+  table.compact-table tbody td{
+    padding: 16px 12px !important;
+    vertical-align: middle;
+  }
 
-{% endblock %}
+  /* columna # */
+  th.col-num, td.col-num{
+    width: 56px !important;
+    text-align: center !important;
+  }
+
+  /* columna checkbox SUPER angosta */
+  th.th-check, td.td-check{
+    width: 36px !important;
+    min-width: 36px !important;
+    max-width: 36px !important;
+    text-align:center !important;
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+  input.row-check, #check_all{
+    width: 14px !important;
+    height: 14px !important;
+    transform: none !important;
+    cursor: pointer;
+    accent-color:#0b3bdb;
+  }
+
+  /* nombre: que use espacio sin recortar feo */
+  th.col-nombre, td.col-nombre{
+    width: 32% !important; /* se estira bonito */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ==========================================================
+    Etapa / Nivel: SIN badge azul, UNA sola línea: "Etapa / Nivel"
+  ========================================================== */
+  th.col-curso, td.col-curso{
+    width: 18% !important;
+    white-space: nowrap !important;
+  }
+  .stage-inline{
+    font-weight: 900;
+    color: #0f172a;
+  }
+  .stage-inline .sep{
+    opacity: .45;
+    margin: 0 6px;
+  }
+
+  /* nota */
+  th.col-nota, td.col-nota{
+    width: 90px !important;
+    text-align:center !important;
+    white-space: nowrap;
+  }
+
+  /* estado */
+  th.col-estado, td.col-estado{
+    width: 140px !important;
+    white-space: nowrap;
+    text-align:center;
+    font-weight: 900;
+  }
+  .ok{ color:#16a34a; font-weight:900; }
+  .bad{ color:#ef4444; font-weight:900; }
+
+  /* Creado (fecha): pequeño, bonito, alineado */
+  th.col-creado, td.col-creado{
+    width: 220px !important;
+    white-space: nowrap;
+  }
+  .inline-date-form{
+    display:flex;
+    align-items:center;
+    gap: 8px;
+    justify-content:flex-start;
+  }
+  .inline-date-form input[type="datetime-local"]{
+    height: 34px !important;
+    width: 152px !important;
+    max-width: 152px !important;
+    padding: 6px 10px !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(15,23,42,.18) !important;
+    background: #fff !important;
+    font-size: 12.5px !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  .inline-date-form input[type="datetime-local"]:focus{
+    border-color: rgba(20,115,230,.55) !important;
+    box-shadow: 0 0 0 4px rgba(20,115,230,.12) !important;
+  }
+  .inline-date-form .btn{
+    height: 34px !important;
+    padding: 0 12px !important;
+    border-radius: 10px !important;
+    white-space: nowrap !important;
+    font-size: 13px !important;
+  }
+
+  /* certificado */
+  th.col-cert, td.col-cert{
+    width: 120px !important;
+    text-align:center;
+    white-space: nowrap;
+  }
+
+  /* acciones */
+  th.col-acc, td.col-acc{
+    width: 160px !important;
+    white-space: nowrap;
+  }
+  .row-actions{
+    display:flex;
+    gap:8px;
+    align-items:center;
+    justify-content:center;
+    flex-wrap: nowrap;
+  }
+
+  /* por si un CSS global mete word-break raro */
+  table.compact-table td, table.compact-table th{
+    word-break: normal !important;
+  }
+  </style>
+
+  <!-- ================== CREAR NUEVO ================== -->
+  <form class="card form" method="post" style="padding:16px;">
+    <div class="grid two">
+      <label class="field">
+        <span>Nombre completo</span>
+        <input name="nombre" placeholder="Ej. Ana Pérez" required />
+      </label>
+
+      <label class="field">
+        <span>Etapa</span>
+        <select name="etapa" id="etapa_new" required>
+          <option value="">Selecciona etapa</option>
+          {% for e in ETAPAS.keys() %}
+            <option value="{{ e }}">{{ e }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Nivel</span>
+        <select name="nivel" id="nivel_new" required>
+          <option value="">Selecciona nivel</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>Nota</span>
+        <input name="nota" type="number" step="0.01" min="0" max="100" placeholder="0–100" required />
+      </label>
+    </div>
+
+    <div class="help">
+      El estado se calcula automáticamente (Aprobado si nota ≥ {{ PASSING_GRADE }}).
+    </div>
+
+    <div class="field">
+      <span>Notas (link de Drive) <small style="color:#6b7280;font-weight:400">(opcional)</small></span>
+      <input class="input" type="url" name="notas" placeholder="https://drive.google.com/..." />
+    </div>
+
+    <div class="btns">
+      <button class="btn btn-primary">Guardar y generar QR</button>
+      <a href="{{ url_for('export_csv') }}" class="btn">Exportar CSV</a>
+      <a href="{{ url_for('export_xlsx') }}" class="btn">Exportar Excel (.xlsx)</a>
+    </div>
+  </form>
+
+  <!-- ================== IMPORTAR XLSX ================== -->
+  <form class="card" method="post" action="{{ url_for('import_xlsx') }}" enctype="multipart/form-data" style="padding:12px;margin:12px 0;">
+    <div class="grid two">
+      <div>
+        <label class="field">
+          <span>Importar estudiantes (.xlsx)</span>
+          <input type="file" name="archivo" accept=".xlsx" required>
+        </label>
+        <small class="help">
+          El archivo debe tener columnas: <code>nombre</code>, <code>etapa</code>, <code>nivel</code>, <code>nota</code>, <code>notas</code> (link de Drive).
+        </small>
+      </div>
+      <div style="align-self:end;">
+        <button class="btn btn-primary">Importar XLSX</button>
+        <a class="btn" href="{{ url_for('download_import_template') }}">Descargar plantilla</a>
+      </div>
+    </div>
+  </form>
+
+  <!-- ================== FILTROS AVANZADOS ================== -->
+  <form method="get" action="{{ url_for('admin') }}" class="card adv-card">
+    <div class="adv-grid">
+      <div>
+        <label class="field">
+          <span>Búsqueda</span>
+          <input class="input" name="q" value="{{ q or '' }}" placeholder="Buscar por nombre, etapa/nivel o token…" />
+        </label>
+      </div>
+
+      <div>
+        <label class="field">
+          <span>Etapa</span>
+          <select class="input" name="etapa" id="etapa_filter">
+            <option value="">Todas las etapas</option>
+            {% for e in ETAPAS.keys() %}
+              <option value="{{ e }}" {{ 'selected' if etapa_filtro==e else '' }}>{{ e }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+
+      <div>
+        <label class="field">
+          <span>Nivel</span>
+          <select class="input" name="nivel" id="nivel_filter">
+            <option value="">Todos los niveles</option>
+            {% if niveles_filtro %}
+              {% for n in niveles_filtro %}
+                <option value="{{ n }}" {{ 'selected' if nivel_filtro==n else '' }}>{{ n }}</option>
+              {% endfor %}
+            {% endif %}
+          </select>
+        </label>
+      </div>
+
+      <div>
+        <label class="field">
+          <span>Estado</span>
+          <select class="input" name="estado">
+            <option value="">Todos</option>
+            <option value="Aprobado" {{ 'selected' if estado_filtro=='Aprobado' else '' }}>Aprobado</option>
+            <option value="Reprobado" {{ 'selected' if estado_filtro=='Reprobado' else '' }}>Reprobado</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="row2">
+        <label class="field" style="min-width:140px;">
+          <span>Nota mín</span>
+          <input class="input" type="number" step="0.01" min="0" max="100" name="nota_min" value="{{ nota_min or '' }}" placeholder="0" />
+        </label>
+
+        <label class="field" style="min-width:140px;">
+          <span>Nota máx</span>
+          <input class="input" type="number" step="0.01" min="0" max="100" name="nota_max" value="{{ nota_max or '' }}" placeholder="100" />
+        </label>
+
+        <label class="field" style="min-width:140px;">
+          <span>Por página</span>
+          <select class="input" name="per_page">
+            <option value="10"  {{ 'selected' if per_page==10 else '' }}>10</option>
+            <option value="25"  {{ 'selected' if per_page==25 else '' }}>25</option>
+            <option value="50"  {{ 'selected' if per_page==50 else '' }}>50</option>
+            <option value="100" {{ 'selected' if per_page==100 else '' }}>100</option>
+          </select>
+        </label>
+
+        <input type="hidden" name="sort" value="{{ sort }}">
+        <input type="hidden" name="order" value="{{ order }}">
+
+        <div class="adv-actions" style="margin-left:auto;">
+          <button class="btn btn-primary">Aplicar filtros</button>
+          {% if q or etapa_filtro or nivel_filtro or estado_filtro or nota_min or nota_max %}
+            <a class="btn" href="{{ url_for('admin', sort=sort, order=order, per_page=per_page, page=1) }}">Limpiar</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="mini-help">Filtra por etapa/nivel/estado y rango de nota.</div>
+  </form>
+
+  <!-- ================== SELECCIÓN + ZIP ================== -->
+  <div class="card bulkbar">
+    <div class="left">
+      <span class="pill"><span id="selectedCount">0</span> seleccionados</span>
+      <button class="btn btn-primary" id="bulkDownloadBtn" disabled>Descargar certificados (ZIP)</button>
+      <button class="btn" id="clearSelectionBtn" type="button">Limpiar selección</button>
+    </div>
+  </div>
+
+  <form id="bulkZipForm" method="post" action="{{ url_for('bulk_download_certs') }}" style="display:none;"></form>
+
+  <!-- ================== TABLA ================== -->
+  <div class="table-wrap">
+    <table class="responsive compact-table">
+      <thead>
+        {% set inv = 'asc' if order == 'desc' else 'desc' %}
+        <tr>
+          <th class="col-num">#</th>
+          <th class="th-check"><input type="checkbox" id="check_all"></th>
+
+          <th class="col-nombre">
+            <a href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort='nombre', order=inv if sort=='nombre' else 'asc', per_page=per_page, page=1) }}">
+              Nombre {% if sort=='nombre' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}
+            </a>
+          </th>
+
+          <th class="col-curso">
+            <a href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort='curso', order=inv if sort=='curso' else 'asc', per_page=per_page, page=1) }}">
+              Etapa / Nivel {% if sort=='curso' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}
+            </a>
+          </th>
+
+          <th class="col-nota">
+            <a href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort='nota', order=inv if sort=='nota' else 'asc', per_page=per_page, page=1) }}">
+              Nota {% if sort=='nota' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}
+            </a>
+          </th>
+
+          <th class="col-estado">
+            <a href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort='estado', order=inv if sort=='estado' else 'asc', per_page=per_page, page=1) }}">
+              Estado {% if sort=='estado' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}
+            </a>
+          </th>
+
+          <th class="col-creado">
+            <a href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort='creado_en', order=inv if sort=='creado_en' else 'desc', per_page=per_page, page=1) }}">
+              Creado {% if sort=='creado_en' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}
+            </a>
+          </th>
+
+          <th class="col-cert">Certificado</th>
+          <th class="col-acc">Acciones</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        {% for e in estudiantes %}
+        <tr>
+          <td class="col-num text-muted">{{ (page - 1) * per_page + loop.index }}</td>
+
+          <td class="td-check">
+            <input type="checkbox" class="row-check" value="{{ e.id }}">
+          </td>
+
+          <td class="col-nombre" data-th="Nombre">{{ e.nombre }}</td>
+
+          {# Etapa / Nivel en una sola línea: "Etapa / Nivel" SIN badge #}
+          <td class="col-curso" data-th="Etapa / Nivel">
+            {% set parts = (e.curso or '').split(' - ') %}
+            <span class="stage-inline">
+              {{ parts[0] }}
+              {% if parts|length > 1 %}
+                <span class="sep">/</span>{{ parts[1] }}
+              {% endif %}
+            </span>
+          </td>
+
+          <td class="col-nota" data-th="Nota">{{ '%.2f'|format(e.nota) }}</td>
+
+          <td class="col-estado" data-th="Estado">
+            <span class="{{ 'ok' if e.estado=='Aprobado' else 'bad' }}">{{ e.estado }}</span>
+          </td>
+
+          <td class="col-creado" data-th="Creado">
+            <form method="post" action="{{ url_for('update_fecha', id=e.id) }}" class="inline-date-form">
+              <input type="datetime-local" name="creado_en" value="{{ e.creado_en|dtlocal }}">
+              <button class="btn btn-sm">Guardar</button>
+            </form>
+          </td>
+
+          <td class="col-cert" data-th="Certificado">
+            <a class="btn btn-outline" href="{{ e.cert_url }}" target="_blank">Ver</a>
+          </td>
+
+          <td class="col-acc" data-th="Acciones">
+            <div class="row-actions">
+              <a class="btn btn-sm btn-primary" href="{{ url_for('editar_estudiante', id=e.id) }}">✏️</a>
+
+              <form method="post" action="{{ url_for('regenerar_qr', token=e.token) }}">
+                <button class="btn btn-sm btn-secondary">🔄</button>
+              </form>
+
+              <form method="post" action="{{ url_for('eliminar_estudiante', id=e.id) }}" class="delete-form">
+                <button type="button" class="btn danger delete-btn">🗑️</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" style="text-align:center;">Sin registros</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <nav>
+    <ul class="pagination">
+      <li class="page-item {{ 'disabled' if page<=1 }}">
+        <a class="page-link" href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort=sort, order=order, page=page-1, per_page=per_page) }}">Anterior</a>
+      </li>
+
+      {% for p in pages %}
+      <li class="page-item {{ 'active' if p==page }}">
+        <a class="page-link" href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort=sort, order=order, page=p, per_page=per_page) }}">{{ p }}</a>
+      </li>
+      {% endfor %}
+
+      <li class="page-item {{ 'disabled' if page>=total_pages }}">
+        <a class="page-link" href="{{ url_for('admin', q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro, nota_min=nota_min, nota_max=nota_max, sort=sort, order=order, page=page+1, per_page=per_page) }}">Siguiente</a>
+      </li>
+    </ul>
+  </nav>
+
+  <script id="mapa-data" type="application/json">{{ ETAPAS|tojson }}</script>
+  <script>
+    const MAPA = JSON.parse(document.getElementById('mapa-data').textContent);
+
+    function fillNiveles(etapa, selectEl, placeholder){
+      selectEl.innerHTML = `<option value="">${placeholder}</option>`;
+      (MAPA[etapa] || []).forEach(n=>{
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n;
+        selectEl.appendChild(o);
+      });
+    }
+
+    // Nuevo estudiante
+    const etapaSel = document.getElementById('etapa_new');
+    const nivelSel = document.getElementById('nivel_new');
+    if (etapaSel && nivelSel){
+      etapaSel.addEventListener('change', ()=> fillNiveles(etapaSel.value, nivelSel, "Selecciona nivel"));
+    }
+
+    // Filtros
+    const etapaFilter = document.getElementById('etapa_filter');
+    const nivelFilter = document.getElementById('nivel_filter');
+    if (etapaFilter && nivelFilter){
+      etapaFilter.addEventListener('change', ()=>{
+        fillNiveles(etapaFilter.value, nivelFilter, "Todos los niveles");
+      });
+    }
+
+    // Selección + ZIP
+    const checkAll = document.getElementById('check_all');
+    const selectedCountEl = document.getElementById('selectedCount');
+    const bulkBtn = document.getElementById('bulkDownloadBtn');
+    const clearBtn = document.getElementById('clearSelectionBtn');
+    const bulkForm = document.getElementById('bulkZipForm');
+    const rowChecks = () => Array.from(document.querySelectorAll('.row-check'));
+
+    function refreshSelectedUI(){
+      const all = rowChecks();
+      const cnt = all.filter(c=>c.checked).length;
+      selectedCountEl.textContent = cnt;
+      bulkBtn.disabled = (cnt === 0);
+
+      const allChecked = all.length && all.every(c=>c.checked);
+      checkAll.checked = allChecked;
+      checkAll.indeterminate = (cnt > 0 && !allChecked);
+    }
+
+    checkAll?.addEventListener('change', ()=>{
+      rowChecks().forEach(c => c.checked = checkAll.checked);
+      refreshSelectedUI();
+    });
+
+    document.addEventListener('change', (e)=>{
+      if (e.target && e.target.classList.contains('row-check')){
+        refreshSelectedUI();
+      }
+    });
+
+    clearBtn?.addEventListener('click', ()=>{
+      rowChecks().forEach(c=> c.checked = false);
+      refreshSelectedUI();
+    });
+
+    bulkBtn?.addEventListener('click', (ev)=>{
+      ev.preventDefault();
+      bulkForm.innerHTML = "";
+      const ids = rowChecks().filter(c=>c.checked).map(c=>c.value);
+      if (!ids.length) return;
+
+      ids.forEach(id=>{
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'ids';
+        input.value = id;
+        bulkForm.appendChild(input);
+      });
+      bulkForm.submit();
+    });
+
+    refreshSelectedUI();
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+      {% if category == "modal" and message == "permiso_denegado" %}
+        <script>
+          Swal.fire({
+            icon: 'warning',
+            title: 'Permiso denegado',
+            text: 'No tienes autorización para realizar esta acción.',
+            confirmButtonText: 'Continuar',
+            confirmButtonColor: '#3085d6'
+          });
+        </script>
+      {% endif %}
+    {% endfor %}
+  {% endwith %}
+
+  {% endblock %}

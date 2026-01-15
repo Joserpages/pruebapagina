@@ -38,7 +38,7 @@ from flask import Flask, render_template
 from flask import redirect, url_for
 from flask import Flask, render_template, request, redirect, url_for, abort, flash, session, send_file, has_request_context
 # ... (tus otros imports iguales)
-
+import zipfile, re
 
 
 # ================== APP ÚNICA ==================
@@ -461,6 +461,11 @@ def role_required(*roles):
         return wrapper
     return decorator
 
+def _safe_filename(name: str) -> str:
+    name = (name or "").strip()
+    name = re.sub(r"[^a-zA-Z0-9._-]+", "_", name)
+    name = name.strip("._-") or "certificado"
+    return name[:80]
 
 
 @app.context_processor
@@ -838,8 +843,10 @@ def admin():
         nivel  = (request.form.get("nivel")  or "").strip()
         etapa = canonical_etapa(etapa)
         nivel = canonical_nivel(etapa, nivel)
+
         nota_s = (request.form.get("nota")   or "").strip()
-        notas_url = (request.form.get("notas") or "").strip()   # <-- NUEVO
+        notas_url = (request.form.get("notas") or "").strip()
+
         if not (nombre and etapa and nivel and nota_s):
             flash("Completa nombre, etapa, nivel y nota.", "error")
             return redirect(url_for("admin"))
@@ -856,18 +863,14 @@ def admin():
 
         estado = "Aprobado" if nota >= PASSING_GRADE else "Reprobado"
         curso_text = f"{etapa} - {nivel}"
-
         token  = uuid.uuid4().hex
-        
-# ...
         creado = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         with conn() as c:
             c.execute("""
-            INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas)
-              VALUES(?,?,?,?,?,?,?)
-                """, (token, nombre, curso_text, nota, estado, creado, notas_url))
-
-            
+                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas)
+                VALUES(?,?,?,?,?,?,?)
+            """, (token, nombre, curso_text, nota, estado, creado, notas_url))
 
         build_qr(token)
         flash("Estudiante creado y QR generado.", "ok")
@@ -875,6 +878,14 @@ def admin():
 
     # -------- Listado, filtros y paginación (GET) --------
     q        = (request.args.get("q") or "").strip()
+
+    etapa_filtro  = canonical_etapa((request.args.get("etapa") or "").strip()) if (request.args.get("etapa") or "").strip() else ""
+    nivel_filtro  = (request.args.get("nivel") or "").strip()
+    estado_filtro = (request.args.get("estado") or "").strip()
+
+    nota_min_s = (request.args.get("nota_min") or "").strip()
+    nota_max_s = (request.args.get("nota_max") or "").strip()
+
     sort     = (request.args.get("sort") or "creado_en").strip()
     order    = (request.args.get("order") or "desc").lower()
     page     = int(request.args.get("page", 1) or 1)
@@ -890,13 +901,58 @@ def admin():
     if page < 1:
         page = 1
 
-    # Búsqueda tolerante a acentos
-    where = "1=1"
+    # niveles a mostrar en el select según etapa seleccionada
+    niveles_filtro = ETAPAS.get(etapa_filtro, []) if etapa_filtro else []
+
+    where_parts = ["1=1"]
     params = []
+
+    # Búsqueda tolerante a acentos
     if q:
         q_norm = f"%{strip_accents_py(q).lower()}%"
-        where = "(lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?)"
-        params = [q_norm, q_norm, f"%{q}%"]
+        where_parts.append(" (lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?) ")
+        params.extend([q_norm, q_norm, f"%{q}%"])
+
+    # Filtro por etapa/nivel: como guardas curso = "Etapa - Nivel"
+    if etapa_filtro:
+        where_parts.append(" curso LIKE ? ")
+        params.append(f"{etapa_filtro} - %")
+
+    if nivel_filtro:
+        # Asegura canonical nivel SOLO si hay etapa (para evitar mismatch)
+        if etapa_filtro:
+            nivel_filtro = canonical_nivel(etapa_filtro, nivel_filtro)
+        where_parts.append(" curso = ? ")
+        # si hay etapa, construye el curso completo:
+        if etapa_filtro:
+            params.append(f"{etapa_filtro} - {nivel_filtro}")
+        else:
+            # si no hay etapa, igual intentamos buscar por texto (fallback)
+            where_parts.append(" lower(strip_accents(curso)) LIKE ? ")
+            params.append(f"%{strip_accents_py(nivel_filtro).lower()}%")
+
+    if estado_filtro:
+        where_parts.append(" estado = ? ")
+        params.append(estado_filtro)
+
+    # rango de nota
+    try:
+        if nota_min_s != "":
+            nota_min = float(nota_min_s)
+            where_parts.append(" nota >= ? ")
+            params.append(nota_min)
+    except Exception:
+        pass
+
+    try:
+        if nota_max_s != "":
+            nota_max = float(nota_max_s)
+            where_parts.append(" nota <= ? ")
+            params.append(nota_max)
+    except Exception:
+        pass
+
+    where = " AND ".join(where_parts)
 
     with conn() as cdb:
         total = cdb.execute(f"SELECT COUNT(*) FROM estudiantes WHERE {where}", params).fetchone()[0]
@@ -911,7 +967,6 @@ def admin():
             (*params, per_page, offset),
         ).fetchall()
 
-    # Normalizamos para la vista
     listado = [{
         "id": e["id"],
         "token": e["token"],
@@ -924,16 +979,20 @@ def admin():
         "cert_url": url_for("ver_cert", token=e["token"], _external=True),
     } for e in rows]
 
-    # Índice base para numeración consecutiva
-    start_index = (page - 1) * per_page
-
-    # Paginador simple
     pages = list(range(max(1, page - 2), min(total_pages, page + 2) + 1))
 
     return render_template(
         "admin.html",
         estudiantes=listado,
         q=q,
+
+        etapa_filtro=etapa_filtro,
+        nivel_filtro=nivel_filtro,
+        niveles_filtro=niveles_filtro,
+        estado_filtro=estado_filtro,
+        nota_min=nota_min_s,
+        nota_max=nota_max_s,
+
         sort=sort,
         order=order,
         page=page,
@@ -941,7 +1000,6 @@ def admin():
         total=total,
         total_pages=total_pages,
         pages=pages,
-        start_index=start_index,
     )
 
 
@@ -1256,8 +1314,146 @@ def update_fecha(id):
     creado_val = dt.strftime("%Y-%m-%d %H:%M:%S")
     with conn() as c:
         c.execute("UPDATE estudiantes SET creado_en=? WHERE id=?", (creado_val, id))
+
     flash("Fecha actualizada.", "ok")
     return redirect(url_for("admin"))
+
+
+# =========================================
+# ZIP: Descargar certificados seleccionados
+# =========================================
+@app.route("/admin/certificados/zip", methods=["POST"])
+@login_required
+@role_required("admin", "subadmin")
+def bulk_download_certs():
+    ids = request.form.getlist("ids")
+    ids = [int(x) for x in ids if str(x).isdigit()]
+
+    if not ids:
+        flash("Selecciona al menos un alumno.", "error")
+        return redirect(url_for("admin"))
+
+    q_marks = ",".join(["?"] * len(ids))
+    with conn() as c:
+        rows = c.execute(
+            f"SELECT id, token, nombre FROM estudiantes WHERE id IN ({q_marks})",
+            ids
+        ).fetchall()
+
+    if not rows:
+        flash("No se encontraron alumnos con esos IDs.", "error")
+        return redirect(url_for("admin"))
+
+    mem = BytesIO()
+    with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for r in rows:
+            pdf_bytes = _build_pdf_bytes_from_token(r["token"])
+            fname = f"{_safe_filename(r['nombre'])}_{r['id']}.pdf"
+            zf.writestr(fname, pdf_bytes)
+
+    mem.seek(0)
+    return send_file(
+        mem,
+        as_attachment=True,
+        download_name="certificados.zip",
+        mimetype="application/zip"
+    )
+
+
+def _build_pdf_bytes_from_token(token: str) -> bytes:
+    _ensure_paths()
+
+    with conn() as cdb:
+        e = cdb.execute("SELECT * FROM estudiantes WHERE token=?", (token,)).fetchone()
+    if not e:
+        raise ValueError(f"Token no existe: {token}")
+
+    qr_png = os.path.join(QR_DIR, f"{token}.png")
+    if not os.path.exists(qr_png):
+        build_qr(token)
+
+    _register_cert_fonts()
+    TITLE_FONT = _pick_font("Playfair-Bold", fallback_bold=True)
+    NAME_FONT  = _pick_font("GreatVibes", fallback_bold=False)
+    TEXT_FONT  = _pick_font("Arial", fallback_bold=False)
+
+    buf = BytesIO()
+    cpdf = canvas.Canvas(buf, pagesize=landscape(A4))
+    W, H = landscape(A4)
+
+    # Fondo
+    try:
+        if os.path.exists(TEMPLATE_PNG):
+            bg = ImageReader(TEMPLATE_PNG)
+            cpdf.drawImage(bg, 0, 0, width=W, height=H, mask="auto",
+                           preserveAspectRatio=True, anchor="c")
+        else:
+            cpdf.setFillColor(colors.whitesmoke)
+            cpdf.rect(0, 0, W, H, stroke=0, fill=1)
+    except Exception:
+        cpdf.setFillColor(colors.whitesmoke)
+        cpdf.rect(0, 0, W, H, stroke=0, fill=1)
+
+    AEA_NAVY = colors.Color(0/255, 47/255, 122/255)
+
+    # Nivel/curso
+    nivel_txt = (e["curso"] or "").strip()
+    cpdf.setFillColor(AEA_NAVY)
+    cpdf.setFont(TITLE_FONT, 20)
+    cpdf.drawCentredString(W/2, H - 220, nivel_txt)
+
+    # Marca de agua (opcional)
+    wm_path = os.path.join(CERT_STATIC, "logo_marca_agua.png")
+    if os.path.exists(wm_path):
+        try:
+            wm = ImageReader(wm_path)
+            cpdf.saveState()
+            if hasattr(cpdf, "setFillAlpha"):
+                cpdf.setFillAlpha(0.08)
+            cpdf.drawImage(wm, W/2 - 210, H/2 - 210, width=420, height=420,
+                           mask="auto", preserveAspectRatio=True)
+            cpdf.restoreState()
+        except Exception:
+            pass
+
+    # Nombre
+    name_txt = (e["nombre"] or "").strip()
+    cpdf.setFillColor(AEA_NAVY)
+    cpdf.setFont(NAME_FONT, 35)
+    cpdf.drawCentredString(W/2, H/2 + 10, name_txt)
+
+    # QR
+    QR_SIZE   = 90
+    RIGHT_MRG = 90
+    TOP_MRG   = 120
+    QR_X = W - RIGHT_MRG - QR_SIZE
+    QR_Y = H - TOP_MRG - QR_SIZE
+
+    try:
+        qr_img = ImageReader(qr_png)
+        cpdf.drawImage(qr_img, QR_X, QR_Y, width=QR_SIZE, height=QR_SIZE,
+                       mask="auto", preserveAspectRatio=True)
+        cpdf.setFont(TEXT_FONT, 9)
+        cpdf.setFillColor(AEA_NAVY)
+        cpdf.drawCentredString(QR_X + QR_SIZE/2, QR_Y - 12, "Escanea para validar")
+    except Exception:
+        pass
+
+    # Fecha
+    try:
+        creado = datetime.fromisoformat(e["creado_en"])
+        fecha_txt = f"{creado.day} de {MESES_ES[creado.month-1].capitalize()} de {creado.year}"
+    except Exception:
+        fecha_txt = (e["creado_en"] or "")
+
+    cpdf.setFillColor(AEA_NAVY)
+    cpdf.setFont(TITLE_FONT, 16)
+    cpdf.drawCentredString(W/2, 60, fecha_txt)
+
+    cpdf.showPage()
+    cpdf.save()
+    buf.seek(0)
+    return buf.read()
 
 # =========================================
 # Main

@@ -1,18 +1,23 @@
-﻿<!doctype html>
+﻿<!-- templates/base.html -->
+<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}Sistema de Certificados{% endblock %}</title>
+
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="icon" href="{{ url_for('static', filename='img/logo2.png') }}">
   <link rel="icon" href="{{ url_for('static', filename='img/favicon.ico') }}">
 
-</head>
-<body>
+  <!-- SweetAlert2 (como lo tenías) -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-<!-- Agrega esto en <head> de base.html -->
-<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  {# EXTRA SOLO PARA PÁGINAS QUE LO NECESITEN (admin lo usará) #}
+  {% block extra_head %}{% endblock %}
+</head>
+
+<body class="{% block body_class %}{% endblock %}">
 
 <header class="topbar">
   <div class="container brand-wrap">
@@ -33,6 +38,8 @@
 
 <div class="hero-underline"></div>
 
+{# NOTA: este container se mantiene igual para TODO el sistema #}
+{# En ADMIN, lo vamos a "estirar" con CSS SOLO cuando body tenga clase page-admin #}
 <div class="container">
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
@@ -60,7 +67,8 @@
     </div>
   </div>
 </footer>
-<!-- Modal de confirmación -->
+
+<!-- Modal de confirmación (lo dejas si quieres, no rompe nada) -->
 <div id="confirmModal" class="modal-overlay">
   <div class="modal-box">
     <h3>Confirmar acción</h3>
@@ -78,9 +86,7 @@
     const modal = document.getElementById("confirmModal");
     modal.style.display = "flex";
 
-    // Botones
     document.getElementById("confirmYes").onclick = function () {
-      // Crear form dinámico y enviarlo
       const form = document.createElement("form");
       form.method = "POST";
       form.action = actionUrl;
@@ -92,6 +98,7 @@
     };
   }
 </script>
+
 <script>
 document.addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll(".delete-btn").forEach(btn => {
@@ -117,5 +124,6 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 </script>
 
+{% block extra_scripts %}{% endblock %}
 </body>
 </html>

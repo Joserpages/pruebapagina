@@ -1,0 +1,12 @@
+# Entorno
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# DB local (para no subir tu base de tu PC)
+db.sqlite3
+*.sqlite3
+
+# QR generados (se regeneran)
+static/qrs/

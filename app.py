@@ -1429,6 +1429,15 @@ def update_fecha(id):
 # =========================================
 # ZIP: Descargar certificados seleccionados
 # =========================================
+# ===========================
+# ZIP: Descargar certificados seleccionados (ROBUSTO)
+# - Evita 504: limita cantidad, crea ZIP en DISCO y lo envía como archivo
+# ===========================
+import tempfile
+from flask import after_this_request
+
+MAX_ZIP_ITEMS = int(os.getenv("MAX_ZIP_ITEMS", "200"))  # ajusta: 200 recomendado
+
 @app.route("/admin/certificados/zip", methods=["POST"])
 @login_required
 @role_required("admin", "subadmin")
@@ -1440,7 +1449,16 @@ def bulk_download_certs():
         flash("Selecciona al menos un alumno.", "error")
         return redirect(url_for("admin"))
 
+    # ✅ Evitar timeouts por listas enormes
+    if len(ids) > MAX_ZIP_ITEMS:
+        flash(
+            f"Demasiados alumnos seleccionados. Máximo {MAX_ZIP_ITEMS} por ZIP para evitar timeout.",
+            "error"
+        )
+        return redirect(url_for("admin"))
+
     q_marks = ",".join(["?"] * len(ids))
+
     with conn() as c:
         rows = c.execute(
             f"SELECT id, token, nombre FROM estudiantes WHERE id IN ({q_marks})",
@@ -1451,20 +1469,79 @@ def bulk_download_certs():
         flash("No se encontraron alumnos con esos IDs.", "error")
         return redirect(url_for("admin"))
 
-    mem = BytesIO()
-    with zipfile.ZipFile(mem, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for r in rows:
-            pdf_bytes = _build_pdf_bytes_from_token(r["token"])
-            fname = f"{_safe_filename(r['nombre'])}_{r['id']}.pdf"
-            zf.writestr(fname, pdf_bytes)
+    # ✅ Orden estable (por id)
+    rows = sorted(rows, key=lambda r: int(r["id"]))
 
-    mem.seek(0)
-    return send_file(
-        mem,
-        as_attachment=True,
-        download_name="certificados.zip",
-        mimetype="application/zip"
-    )
+    # ✅ Crear ZIP en DISCO (no BytesIO) => menos RAM y más estable en VPS
+    tmp_dir = tempfile.gettempdir()
+    zip_name = f"certificados_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.zip"
+    zip_path = os.path.join(tmp_dir, zip_name)
+
+    ok_count = 0
+    fail_count = 0
+
+    try:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for r in rows:
+                try:
+                    pdf_bytes = _build_pdf_bytes_from_token(r["token"])
+                    fname = f"{_safe_filename(r['nombre'])}_{r['id']}.pdf"
+                    zf.writestr(fname, pdf_bytes)
+                    ok_count += 1
+                except Exception as ex:
+                    # ✅ si un PDF falla, no tumbamos todo el ZIP
+                    fail_count += 1
+                    # opcional: agrega un txt con el error
+                    err_name = f"ERROR_{r['id']}_{_safe_filename(r['nombre'])}.txt"
+                    zf.writestr(
+                        err_name,
+                        f"No se pudo generar PDF para ID {r['id']} token {r['token']}.\nError: {repr(ex)}\n"
+                    )
+
+        # ✅ Si no se generó ninguno, borra el zip y vuelve
+        if ok_count == 0:
+            try:
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+            except Exception:
+                pass
+            flash("No se pudo generar ningún PDF. Revisa logs.", "error")
+            return redirect(url_for("admin"))
+
+        # ✅ Limpieza del archivo temporal al terminar de enviarlo
+        @after_this_request
+        def _cleanup(response):
+            try:
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+            except Exception:
+                pass
+            return response
+
+        if fail_count > 0:
+            flash(
+                f"ZIP generado con advertencias: {ok_count} OK, {fail_count} fallaron (se incluyeron archivos ERROR_*.txt).",
+                "error"
+            )
+
+        # ✅ Para archivos grandes: as_attachment=True y conditional=True
+        return send_file(
+            zip_path,
+            as_attachment=True,
+            download_name="certificados.zip",
+            mimetype="application/zip",
+            conditional=True
+        )
+
+    except Exception as e:
+        # si algo revienta, intenta borrar zip parcial
+        try:
+            if os.path.exists(zip_path):
+                os.remove(zip_path)
+        except Exception:
+            pass
+        flash(f"Error generando ZIP: {repr(e)}", "error")
+        return redirect(url_for("admin"))
 
 
 def _build_pdf_bytes_from_token(token: str) -> bytes:
@@ -1479,6 +1556,7 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
     if not os.path.exists(qr_png):
         build_qr(token)
 
+    # ⚠️ Registrar fuentes UNA VEZ suele ser mejor, pero lo dejamos aquí por compatibilidad
     _register_cert_fonts()
     TITLE_FONT = _pick_font("Playfair-Bold", fallback_bold=True)
     NAME_FONT  = _pick_font("GreatVibes", fallback_bold=False)
@@ -1492,8 +1570,10 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
     try:
         if os.path.exists(TEMPLATE_PNG):
             bg = ImageReader(TEMPLATE_PNG)
-            cpdf.drawImage(bg, 0, 0, width=W, height=H, mask="auto",
-                           preserveAspectRatio=True, anchor="c")
+            cpdf.drawImage(
+                bg, 0, 0, width=W, height=H, mask="auto",
+                preserveAspectRatio=True, anchor="c"
+            )
         else:
             cpdf.setFillColor(colors.whitesmoke)
             cpdf.rect(0, 0, W, H, stroke=0, fill=1)
@@ -1517,8 +1597,10 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
             cpdf.saveState()
             if hasattr(cpdf, "setFillAlpha"):
                 cpdf.setFillAlpha(0.08)
-            cpdf.drawImage(wm, W/2 - 210, H/2 - 210, width=420, height=420,
-                           mask="auto", preserveAspectRatio=True)
+            cpdf.drawImage(
+                wm, W/2 - 210, H/2 - 210, width=420, height=420,
+                mask="auto", preserveAspectRatio=True
+            )
             cpdf.restoreState()
         except Exception:
             pass
@@ -1538,8 +1620,10 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
 
     try:
         qr_img = ImageReader(qr_png)
-        cpdf.drawImage(qr_img, QR_X, QR_Y, width=QR_SIZE, height=QR_SIZE,
-                       mask="auto", preserveAspectRatio=True)
+        cpdf.drawImage(
+            qr_img, QR_X, QR_Y, width=QR_SIZE, height=QR_SIZE,
+            mask="auto", preserveAspectRatio=True
+        )
         cpdf.setFont(TEXT_FONT, 9)
         cpdf.setFillColor(AEA_NAVY)
         cpdf.drawCentredString(QR_X + QR_SIZE/2, QR_Y - 12, "Escanea para validar")
@@ -1561,6 +1645,7 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
     cpdf.save()
     buf.seek(0)
     return buf.read()
+
 
 # =========================================
 # Main

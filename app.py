@@ -259,6 +259,16 @@ def canonical_nivel(etapa_canon: str, nivel: str) -> str:
         if _norm_key(opt) == n:
             return opt
     return nivel
+def etapa_keys(etapa_canon: str) -> list[str]:
+    """
+    Devuelve todas las llaves normalizadas que deben considerarse equivalentes
+    a la etapa canónica (incluye aliases como preintermedio -> Pre Intermedia).
+    """
+    keys = {_norm_key(etapa_canon)}
+    for alias_norm, canon in ETAPA_ALIASES.items():
+        if canon == etapa_canon:
+            keys.add(alias_norm)  # alias ya viene normalizado
+    return sorted(keys)
 
 # =========================================
 # Helpers (acentos / DB)
@@ -470,11 +480,7 @@ def _safe_filename(name: str) -> str:
     return name[:80]
 
 
-@app.context_processor
-def inject_user():
-    return {"current_user": session.get("user"),
-            "PASSING_GRADE": PASSING_GRADE,
-            "ETAPAS": ETAPAS}
+
 # --- Helpers para el <input type="datetime-local"> ---
 def _parse_datetime_local(s: str):
     """'YYYY-MM-DDTHH:MM' -> datetime (o None si es inválido)."""
@@ -816,13 +822,6 @@ def login():
     return render_template("login.html")
 
 
-@app.context_processor
-def inject_user():
-    # current_user disponible en todas las plantillas
-    return {"current_user": session.get("user"),
-            "PASSING_GRADE": PASSING_GRADE,
-            "ETAPAS": ETAPAS}
-
 
 @app.route("/logout")
 def logout():
@@ -923,7 +922,6 @@ def admin():
     params = []
 
     # ✅ EXPRESIONES SQL robustas:
-    # Partimos por "-" (sin importar espacios alrededor)
     etapa_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,1,instr(curso,'-')-1) ELSE curso END)"
     nivel_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,instr(curso,'-')+1) ELSE '' END)"
 
@@ -933,10 +931,11 @@ def admin():
         where_parts.append("(lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?)")
         params.extend([q_norm, q_norm, f"%{q}%"])
 
-    # ✅ Filtro etapa EXACTO robusto
+    # ✅ Filtro etapa (acepta aliases como "Pre Intermedio" y "Pre Intermedia")
     if etapa_filtro:
-        where_parts.append(f"norm_key({etapa_expr}) = ?")
-        params.append(_norm_key(etapa_filtro))
+        keys = etapa_keys(etapa_filtro)  # <- devuelve varias variantes normalizadas
+        where_parts.append(f"norm_key({etapa_expr}) IN ({','.join(['?']*len(keys))})")
+        params.extend(keys)
 
     # ✅ Filtro nivel EXACTO robusto
     if nivel_filtro:
@@ -968,7 +967,6 @@ def admin():
         params.append(nmax)
 
     # ✅ filtro por fechas emitidas
-    # creado_en es TEXT "YYYY-MM-DD HH:MM:SS"
     if fecha_desde:
         where_parts.append("date(creado_en) >= date(?)")
         params.append(fecha_desde)
@@ -1017,7 +1015,6 @@ def admin():
         nota_min=nota_min_s,
         nota_max=nota_max_s,
 
-        # ✅ por si quieres usarlos directo en template
         desde=fecha_desde,
         hasta=fecha_hasta,
 
@@ -1029,6 +1026,7 @@ def admin():
         total_pages=total_pages,
         pages=pages,
     )
+
 
 from flask import jsonify
 
@@ -1056,7 +1054,6 @@ def admin_ids():
     where_parts = ["1=1"]
     params = []
 
-    # ✅ robusto por "-"
     etapa_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,1,instr(curso,'-')-1) ELSE curso END)"
     nivel_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,instr(curso,'-')+1) ELSE '' END)"
 
@@ -1065,9 +1062,11 @@ def admin_ids():
         where_parts.append("(lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?)")
         params.extend([q_norm, q_norm, f"%{q}%"])
 
+    # ✅ Filtro etapa (acepta aliases como "Pre Intermedio" y "Pre Intermedia")
     if etapa_filtro:
-        where_parts.append(f"norm_key({etapa_expr}) = ?")
-        params.append(_norm_key(etapa_filtro))
+        keys = etapa_keys(etapa_filtro)
+        where_parts.append(f"norm_key({etapa_expr}) IN ({','.join(['?']*len(keys))})")
+        params.extend(keys)
 
     if nivel_filtro:
         where_parts.append(f"norm_key({nivel_expr}) = ?")
@@ -1080,17 +1079,21 @@ def admin_ids():
         params.append(estado_filtro)
 
     def _to_float(s):
-        try: return float(s)
-        except: return None
+        try:
+            return float(s)
+        except Exception:
+            return None
 
     nmin = _to_float(nota_min_s) if nota_min_s != "" else None
     nmax = _to_float(nota_max_s) if nota_max_s != "" else None
-    if nmin is not None:
-        where_parts.append("nota >= ?"); params.append(nmin)
-    if nmax is not None:
-        where_parts.append("nota <= ?"); params.append(nmax)
 
-    # ✅ fechas
+    if nmin is not None:
+        where_parts.append("nota >= ?")
+        params.append(nmin)
+    if nmax is not None:
+        where_parts.append("nota <= ?")
+        params.append(nmax)
+
     if fecha_desde:
         where_parts.append("date(creado_en) >= date(?)")
         params.append(fecha_desde)

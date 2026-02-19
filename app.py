@@ -1,6 +1,6 @@
 ﻿# app.py  — versión completa
 
-import os, sqlite3, uuid, csv, unicodedata
+import os, sqlite3, uuid, csv, unicodedata, json
 from datetime import datetime
 from functools import wraps
 from io import BytesIO, StringIO
@@ -21,6 +21,8 @@ from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Table as RLTable, TableStyle
+
 # =============== FIX BASE_DIR ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -32,8 +34,10 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl import load_workbook
 from openpyxl import Workbook, load_workbook
+
 app = Flask(__name__)
 app.secret_key = "dev-secret"  # cambia en producción
+
 from flask import Flask, render_template
 from flask import redirect, url_for
 from flask import Flask, render_template, request, redirect, url_for, abort, flash, session, send_file, has_request_context
@@ -138,6 +142,18 @@ def _get_notas_value(row: sqlite3.Row) -> str:
     return (row["notas"] if "notas" in row.keys() and row["notas"] else
             (row["columna"] if "columna" in row.keys() else ""))
 
+def _load_detalle_notas(row: sqlite3.Row) -> dict:
+    try:
+        raw = row["detalle_notas"]
+    except Exception:
+        raw = None
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw) if isinstance(raw, str) else {}
+    except Exception:
+        return {}
+
 def _pick_font(name: str, fallback_bold: bool = False) -> str:
     """
     Devuelve el nombre de fuente registrada; si no, Arial/Arial-Bold/Helvetica.
@@ -157,6 +173,7 @@ def _ensure_paths():
     os.makedirs(QR_DIR, exist_ok=True)
     os.makedirs(CERT_STATIC, exist_ok=True)
     os.makedirs(FONTS_DIR, exist_ok=True)
+
 def _pick_font(name: str, fallback_bold: bool = False) -> str:
     """Devuelve el nombre de fuente disponible o Helvetica como reserva."""
     available = set(pdfmetrics.getRegisteredFontNames())
@@ -228,6 +245,21 @@ ETAPAS = {
     "Curso de vacaciones": ["CVacaciones 1"],
 }
 
+# =========================================
+# Catálogo de actividades (Boletín de notas)
+# =========================================
+ACTIVIDADES = [
+    ("Examen 1", 10, "examen_1"),
+    ("Examen 2", 10, "examen_2"),
+    ("Lectura", 10, "lectura"),
+    ("Escritura", 10, "escritura"),
+    ("Vocabulario", 10, "vocabulario"),
+    ("Club de Conversación", 10, "club_conversacion"),
+    ("Comprensión Auditiva", 10, "comprension_auditiva"),
+    ("Examen General", 30, "examen_general"),
+]
+TOTAL_PUNTOS = 100
+
 def _norm_key(s: str) -> str:
     return strip_accents_py(s or "").lower().replace(" ", "").replace("_", "").replace("-", "")
 
@@ -259,6 +291,7 @@ def canonical_nivel(etapa_canon: str, nivel: str) -> str:
         if _norm_key(opt) == n:
             return opt
     return nivel
+
 def etapa_keys(etapa_canon: str) -> list[str]:
     """
     Devuelve todas las llaves normalizadas que deben considerarse equivalentes
@@ -317,6 +350,12 @@ def init_db():
         # ✅ poner valor por defecto a los viejos
         try:
             c.execute("UPDATE estudiantes SET programa='AEA' WHERE programa IS NULL OR programa=''")
+        except Exception:
+            pass
+
+        # ✅ NUEVO: detalle de notas (JSON con actividades)
+        try:
+            c.execute("ALTER TABLE estudiantes ADD COLUMN detalle_notas TEXT")
         except Exception:
             pass
 
@@ -417,6 +456,7 @@ with app.app_context():
     except Exception as e:
         # Útil para ver en logs de Render si algo falla al migrar
         print("INIT ERROR:", repr(e))
+
 # =========================================
 # QR
 # =========================================
@@ -654,7 +694,7 @@ def _pick_font(name: str, fallback_bold: bool = False) -> str:
         if "Arial" in regs:
             return "Arial"
         return "Helvetica"
-    
+
 
 @app.route("/cert/<token>", endpoint="ver_cert")
 def certificate_view(token):
@@ -789,6 +829,224 @@ def cert_pdf(token):
     filename = f"certificado_{name_txt.replace(' ', '_')}.pdf"
     return send_file(buf, as_attachment=False, download_name=filename,
                      mimetype="application/pdf")
+
+
+# =========================================
+# PDF – Boletín de Notas
+# =========================================
+@app.route("/cert/<token>/notas.pdf")
+def notas_pdf(token):
+    with conn() as c:
+        e = c.execute("SELECT * FROM estudiantes WHERE token=?", (token,)).fetchone()
+    if not e:
+        abort(404)
+
+    detalle = _load_detalle_notas(e)
+
+    nombre = (e["nombre"] or "").strip()
+    curso = (e["curso"] or "").strip()
+
+    etapa, nivel = "", ""
+    if " - " in curso:
+        etapa, nivel = curso.split(" - ", 1)
+    else:
+        etapa = curso
+
+    # Nota final
+    if detalle:
+        total = 0
+        for _, _, key in ACTIVIDADES:
+            try:
+                total += float(detalle.get(key, 0) or 0)
+            except:
+                pass
+        try:
+            nota_final = float(detalle.get("punteo_final", total))
+        except:
+            nota_final = total
+    else:
+        nota_final = float(e["nota"] or 0)
+
+    estado = "APROBADO" if nota_final >= PASSING_GRADE else "REPROBADO"
+
+    try:
+        creado = datetime.fromisoformat(e["creado_en"])
+        fecha_txt = f"{creado.day} de {MESES_ES[creado.month-1].capitalize()} de {creado.year}"
+    except:
+        fecha_txt = e["creado_en"]
+
+    idioma = (detalle.get("idioma") or "Inglés Americano") if detalle else "Inglés Americano"
+    nivel_cefr = (detalle.get("nivel_cefr") or nivel) if detalle else nivel
+
+    # =====================
+    # A5 (media página)
+    # =====================
+    W, H = (420, 595)
+    buf = BytesIO()
+    cpdf = canvas.Canvas(buf, pagesize=(W, H))
+
+    NAVY = colors.Color(0.07, 0.26, 0.33)
+
+    # Fondo blanco
+    cpdf.setFillColor(colors.white)
+    cpdf.rect(0, 0, W, H, stroke=0, fill=1)
+
+    # =====================
+    # MARCA DE AGUA LOGO
+    # =====================
+    logo_path = os.path.join(CERT_STATIC, "logo.png")  # static/certs/logo.png
+
+    if os.path.exists(logo_path):
+        try:
+            logo = ImageReader(logo_path)
+            cpdf.saveState()
+
+            # Transparencia baja
+            if hasattr(cpdf, "setFillAlpha"):
+                cpdf.setFillAlpha(0.07)
+
+            cpdf.drawImage(
+                logo,
+                W/2 - 120,
+                H/2 - 120,
+                width=240,
+                height=240,
+                mask='auto',
+                preserveAspectRatio=True
+            )
+            cpdf.restoreState()
+        except Exception as e:
+            print("Error logo:", e)
+
+    # =====================
+    # Header centrado
+    # =====================
+    cpdf.setFillColor(NAVY)
+    cpdf.setFont("Helvetica-Bold", 15)
+    cpdf.drawCentredString(W/2, H-40, "BOLETÍN DE NOTAS")
+
+    cpdf.setFillColor(colors.black)
+    cpdf.setFont("Helvetica", 9)
+    cpdf.drawCentredString(W/2, H-58, "AMERICAN ENGLISH ACADEMY GT")
+
+    # =====================
+    # Datos
+    # =====================
+    y = H - 85
+
+    cpdf.setFont("Helvetica-Bold", 9)
+    cpdf.drawString(30, y, "Nombre:")
+    cpdf.setFont("Helvetica", 9)
+    cpdf.drawString(85, y, nombre)
+
+    cpdf.setFont("Helvetica-Bold", 9)
+    cpdf.drawString(230, y, "Idioma:")
+    cpdf.setFont("Helvetica", 9)
+    cpdf.drawString(285, y, idioma)
+
+    y -= 14
+
+    cpdf.setFont("Helvetica-Bold", 9)
+    cpdf.drawString(30, y, "Nivel:")
+    cpdf.setFont("Helvetica", 9)
+    cpdf.drawString(85, y, nivel_cefr)
+
+    cpdf.setFont("Helvetica-Bold", 9)
+    cpdf.drawString(230, y, "Fecha:")
+    cpdf.setFont("Helvetica", 9)
+    cpdf.drawString(285, y, fecha_txt)
+
+    # =====================
+    # Tabla compacta
+    # =====================
+    data = [["ACTIVIDAD", "PTS", "OBT."]]
+
+    if detalle:
+        for label, pts, key in ACTIVIDADES:
+            val = detalle.get(key, "")
+            data.append([label, str(pts), "" if val=="" else str(val)])
+
+    data.append(["Punteo Final", str(TOTAL_PUNTOS), f"{nota_final:.0f}"])
+    data.append(["Resultado", "", estado])
+
+    table_w = W - 60
+    col_w = [table_w*0.60, table_w*0.18, table_w*0.22]
+
+    t = RLTable(data, colWidths=col_w)
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), NAVY),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTSIZE", (0,0), (-1,0), 9),
+        ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
+        ("FONTSIZE", (0,1), (-1,-1), 8.5),
+        ("ALIGN", (1,0), (-1,-1), "CENTER"),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+        ("ROWBACKGROUNDS", (0,1), (-1,-1),
+         [colors.white, colors.Color(0.97,0.97,0.97)]),
+    ]))
+
+    t.wrapOn(cpdf, table_w, H)
+    t.drawOn(cpdf, 30, y-280)
+
+    # =====================
+    # FIRMA MÁS GRANDE
+    # =====================
+    firma_path = os.path.join(CERT_STATIC, "firma.png")
+
+    FIRMA_X = 30
+    FIRMA_Y = 60
+    FIRMA_W = 200   # ← más grande
+    FIRMA_H = 70    # ← más alto
+
+    if os.path.exists(firma_path):
+        try:
+            firma = ImageReader(firma_path)
+            cpdf.drawImage(
+                firma,
+                FIRMA_X,
+                FIRMA_Y,
+                width=FIRMA_W,
+                height=FIRMA_H,
+                mask='auto',
+                preserveAspectRatio=True
+            )
+        except Exception as e:
+            print("Error firma:", e)
+
+    cpdf.line(FIRMA_X, FIRMA_Y-5, FIRMA_X+FIRMA_W, FIRMA_Y-5)
+    cpdf.setFont("Helvetica", 8)
+    cpdf.drawCentredString(FIRMA_X+FIRMA_W/2, FIRMA_Y-18, "Firma")
+
+    # =====================
+    # SELLO DERECHO
+    # =====================
+    sx = W - 160
+    base_y = 70
+
+    cpdf.setFont("Helvetica-Bold", 10)
+    cpdf.drawCentredString(sx+60, base_y+45, "AMERICAN")
+    cpdf.drawCentredString(sx+60, base_y+32, "ENGLISH")
+    cpdf.drawCentredString(sx+60, base_y+19, "ACADEMY GT")
+
+    cpdf.setFont("Helvetica", 7)
+    cpdf.drawCentredString(sx+60, base_y+6, "FREDY RODAS")
+    cpdf.drawCentredString(sx+60, base_y-4, "DIRECTOR ADMINISTRATIVO")
+
+    cpdf.setFont("Helvetica-Bold", 9)
+    cpdf.setFillColor(NAVY)
+    cpdf.drawCentredString(sx+60, base_y-18, "SELLO")
+
+    cpdf.showPage()
+    cpdf.save()
+    buf.seek(0)
+
+    return send_file(
+        buf,
+        as_attachment=False,
+        download_name=f"notas_{nombre.replace(' ','_')}.pdf",
+        mimetype="application/pdf"
+    )
 
 
 @app.route("/login", methods=["GET","POST"])
@@ -1149,8 +1407,6 @@ def editar_estudiante(id):
                       (nombre, curso_text, nota, estado, id))
         flash("Estudiante actualizado.", "ok")
         return redirect(url_for("admin"))
-         
-         
 
     # separar etapa/nivel para el form
     etapa_val, nivel_val = "", ""
@@ -1159,7 +1415,7 @@ def editar_estudiante(id):
 
     return render_template("editar.html", est=e, etapa_val=etapa_val, nivel_val=nivel_val)
 
-    
+
 @app.route("/admin/eliminar/<int:id>", methods=["POST"])
 @login_required
 @role_required("admin")
@@ -1279,12 +1535,10 @@ def export_xlsx():
 @role_required("admin")
 def import_xlsx():
     """
-    Importa estudiantes desde .xlsx (no sensible a mayúsculas) con columnas:
-      - nombre completo (o 'nombre')
-      - etapa
-      - nivel
-      - nota
-      - notas  (link de Drive)
+    Importa estudiantes desde .xlsx:
+    - Soporta plantilla vieja: nombre completo/nombre, etapa, nivel, nota, notas
+    - Soporta plantilla nueva (boletín): idioma, nivel cefr, actividades, punteo final, resultado final, notas
+    Guarda detalle en estudiantes.detalle_notas (JSON).
     """
     f = request.files.get("archivo")
     if not f or not f.filename:
@@ -1302,67 +1556,143 @@ def import_xlsx():
         flash("No se pudo leer el Excel. Verifica el formato.", "error")
         return redirect(url_for("admin"))
 
-    # Mapear encabezados
+    # Mapear encabezados (normalizados y tolerantes a acentos)
     header_map = {}
     for i in range(1, ws.max_column + 1):
-        val = (ws.cell(row=1, column=i).value or "").strip().lower()
-        header_map[val] = i
+        v = ws.cell(row=1, column=i).value
+        key = strip_accents_py(str(v or "")).strip().lower()
+        header_map[key] = i
 
-    # Llaves aceptadas
-    name_keys = ["nombre completo", "nombre"]
-    etapa_key = "etapa"
-    nivel_key = "nivel"
-    nota_key = "nota"
-    notas_key = "notas"  # link de Drive
+    def col(name: str):
+        return header_map.get(strip_accents_py(name).strip().lower())
 
-    # Validación
-    if not any(k in header_map for k in name_keys) or \
-       etapa_key not in header_map or \
-       nivel_key not in header_map or \
-       nota_key not in header_map:
-        flash("Encabezados inválidos. Requeridos: Nombre completo, Etapa, Nivel, Nota. (Notas es opcional)", "error")
+    # Columnas base
+    name_cols = [col("nombre completo"), col("nombre")]
+    etapa_col = col("etapa")
+    nivel_col = col("nivel")
+    nota_col  = col("nota")   # plantilla vieja
+    notas_col = col("notas")
+
+    # Columnas boletín
+    idioma_col = col("idioma")
+    nivel_cefr_col = col("nivel cefr")
+
+    cols_act = {
+        "examen_1": col("examen 1"),
+        "examen_2": col("examen 2"),
+        "lectura": col("lectura"),
+        "escritura": col("escritura"),
+        "vocabulario": col("vocabulario"),
+        "club_conversacion": col("club de conversacion"),
+        "comprension_auditiva": col("comprension auditiva"),
+        "examen_general": col("examen general"),
+    }
+    punteo_final_col = col("punteo final")
+    resultado_final_col = col("resultado final")
+
+    # Validación mínima
+    if not any(name_cols) or not etapa_col or not nivel_col:
+        flash("Encabezados inválidos. Requeridos: Nombre completo (o Nombre), Etapa, Nivel.", "error")
         return redirect(url_for("admin"))
 
     ok, skipped = 0, 0
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for r in range(2, ws.max_row + 1):
-        # nombre (acepta 'nombre completo' o 'nombre')
+        # nombre
         nombre = ""
-        for nk in name_keys:
-            if nk in header_map:
-                nombre = str(ws.cell(row=r, column=header_map[nk]).value or "").strip()
+        for nc in name_cols:
+            if nc:
+                nombre = str(ws.cell(row=r, column=nc).value or "").strip()
                 if nombre:
                     break
 
-        etapa = str(ws.cell(row=r, column=header_map[etapa_key]).value or "").strip() if etapa_key in header_map else ""
-        nivel = str(ws.cell(row=r, column=header_map[nivel_key]).value or "").strip() if nivel_key in header_map else ""
-        nota_v = ws.cell(row=r, column=header_map[nota_key]).value if nota_key in header_map else ""
+        etapa = str(ws.cell(row=r, column=etapa_col).value or "").strip() if etapa_col else ""
+        nivel = str(ws.cell(row=r, column=nivel_col).value or "").strip() if nivel_col else ""
 
         if not nombre or not etapa or not nivel:
             skipped += 1
             continue
 
-        try:
-            nota = float(nota_v)
-        except Exception:
-            skipped += 1
-            continue
+        # nota: si viene boletín, la calculamos desde punteo final/actividades; si no, usamos columna "nota"
+        detalle = {}
 
+        # idioma / nivel_cefr si existen
+        if idioma_col:
+            detalle["idioma"] = str(ws.cell(row=r, column=idioma_col).value or "").strip()
+        if nivel_cefr_col:
+            detalle["nivel_cefr"] = str(ws.cell(row=r, column=nivel_cefr_col).value or "").strip()
+
+        # actividades si existen
+        any_act = False
+        total_act = 0.0
+        for _, _, key in ACTIVIDADES:
+            cidx = cols_act.get(key)
+            if not cidx:
+                continue
+            v = ws.cell(row=r, column=cidx).value
+            if v is None or str(v).strip() == "":
+                continue
+            any_act = True
+            try:
+                fv = float(v)
+            except Exception:
+                fv = 0.0
+            detalle[key] = fv
+            total_act += fv
+
+        # punteo final si existe
+        nota = None
+        if punteo_final_col:
+            vpf = ws.cell(row=r, column=punteo_final_col).value
+            if vpf is not None and str(vpf).strip() != "":
+                try:
+                    nota = float(vpf)
+                    detalle["punteo_final"] = nota
+                except Exception:
+                    pass
+
+        # si no hay punteo final pero sí actividades, usar suma
+        if nota is None and any_act:
+            nota = total_act
+            detalle["punteo_final"] = nota
+
+        # si no hay boletín, intentar "nota" vieja
+        if nota is None:
+            if not nota_col:
+                skipped += 1
+                continue
+            nota_v = ws.cell(row=r, column=nota_col).value
+            try:
+                nota = float(nota_v)
+            except Exception:
+                skipped += 1
+                continue
+
+        # estado/resultado
         estado = "Aprobado" if nota >= PASSING_GRADE else "Reprobado"
+
+        # si viene resultado final en el excel, guardarlo en detalle (no cambia tu estado DB)
+        if resultado_final_col:
+            rf = ws.cell(row=r, column=resultado_final_col).value
+            if rf is not None and str(rf).strip() != "":
+                detalle["resultado_final"] = str(rf).strip()
+
         curso_text = f"{etapa} - {nivel}"
 
+        # notas url
         notas_url = ""
-        if notas_key in header_map:
-            dv = ws.cell(row=r, column=header_map[notas_key]).value
+        if notas_col:
+            dv = ws.cell(row=r, column=notas_col).value
             notas_url = (str(dv).strip() if dv is not None else "")
 
         token = uuid.uuid4().hex
         with conn() as c:
             c.execute("""
-                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas)
-                VALUES(?,?,?,?,?,?,?)
-            """, (token, nombre, curso_text, nota, estado, now, notas_url))
+                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas,detalle_notas)
+                VALUES(?,?,?,?,?,?,?,?)
+            """, (token, nombre, curso_text, float(nota), estado, now, notas_url,
+                  json.dumps(detalle, ensure_ascii=False) if detalle else None))
         build_qr(token)
         ok += 1
 
@@ -1373,24 +1703,44 @@ def import_xlsx():
 @login_required
 @role_required("admin")
 def download_import_template():
-    """Descarga una plantilla XLSX con columnas: nombre completo, etapa, nivel, nota, notas (link de Drive)."""
     wb = Workbook()
     ws = wb.active
     ws.title = "ImportarEstudiantes"
 
-    headers = ["nombre completo", "etapa", "nivel", "nota", "notas"]
+    headers = [
+        "nombre completo", "etapa", "nivel",
+        "idioma", "nivel cefr",
+        "examen 1", "examen 2", "lectura", "escritura", "vocabulario",
+        "club de conversacion", "comprension auditiva", "examen general",
+        "punteo final", "resultado final",
+        "notas"
+    ]
     ws.append(headers)
 
-    # Ejemplos
-    ws.append(["Juan Pérez", "Intermedia", "B1 PLUS", 85, "https://drive.google.com/xxxx"])
-    ws.append(["María López", "Principiante", "PRE A1", 63, "https://drive.google.com/yyyy"])
+    ws.append([
+        "Juan Pérez", "Intermedia", "B1 PLUS",
+        "Inglés Americano", "B1 CEFR",
+        8, 9, 10, 10, 10,
+        9, 8, 27,
+        91, "APROBADO",
+        ""
+    ])
 
-    # Estilos de encabezado
+    ws.append([
+        "María López", "Principiante", "PRE A1",
+        "Inglés Americano", "A1 CEFR",
+        6, 7, 8, 8, 7,
+        6, 6, 18,
+        66, "APROBADO",
+        ""
+    ])
+
     header_fill = PatternFill("solid", fgColor="DCE6F1")
     header_font = Font(bold=True)
     header_align = Alignment(horizontal="center")
     thin = Side(style="thin", color="CCCCCC")
     border_all = Border(left=thin, right=thin, top=thin, bottom=thin)
+
     for ccol in range(1, len(headers) + 1):
         cell = ws.cell(row=1, column=ccol)
         cell.fill = header_fill

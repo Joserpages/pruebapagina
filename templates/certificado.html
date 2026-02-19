@@ -11,9 +11,10 @@
       <!-- Columna izquierda: datos -->
       <div class="info">
         <dl class="kv">
-            <p style="text-align:center; font-weight:600; color:#111; margin-bottom:20px;">
-              Este diploma ha sido extendido y autorizado por la empresa American English Academy GT
-            </p>
+          <p style="text-align:center; font-weight:600; color:#111; margin-bottom:20px;">
+            Este diploma ha sido extendido y autorizado por la empresa American English Academy GT
+          </p>
+
           <div>
             <dt>Nombre</dt>
             <dd>{{ est.nombre }}</dd>
@@ -48,15 +49,13 @@
           {% if est.estado == "Aprobado" %}
             <button class="btn btn-primary" onclick="window.print()">Imprimir / Guardar PDF</button>
             <a class="btn btn-outline" href="{{ url_for('cert_pdf', token=est.token) }}">Ver Diploma</a>
-            {% if est.notas %}
-              <a class="btn btn-sm btn-outline" href="{{ est.notas }}" target="_blank">Ver Notas</a>
-            {% endif %}
+
+            <!-- ✅ NOTAS: ahora se generan como PDF interno -->
+            <a class="btn btn-sm btn-outline" href="{{ url_for('notas_pdf', token=est.token) }}">Ver Notas</a>
+
           {% else %}
-            {% if est.notas %}
-              <a class="btn btn-sm btn-outline" href="{{ est.notas }}" target="_blank">Ver Notas</a>
-            {% else %}
-              <span class="chip-bad">Notas no disponibles</span>
-            {% endif %}
+            <!-- ✅ Aunque esté reprobado, igual puede ver sus notas en PDF -->
+            <a class="btn btn-sm btn-outline" href="{{ url_for('notas_pdf', token=est.token) }}">Ver Notas</a>
           {% endif %}
         </div>
       </div>

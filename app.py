@@ -22,7 +22,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Table as RLTable, TableStyle
-
+from pypdf import PdfReader, PdfWriter
 # =============== FIX BASE_DIR ====================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -726,114 +726,6 @@ def certificate_view(token):
         qr_url=f"/static/qrs/{token}.png",
     )
 
-@app.route("/cert/<token>/pdf")
-def cert_pdf(token):
-    _ensure_paths()
-
-    # --- Cargar alumno ---
-    with conn() as cdb:
-        e = cdb.execute("SELECT * FROM estudiantes WHERE token=?", (token,)).fetchone()
-    if not e:
-        abort(404)
-
-    # --- QR (asegurar que exista la imagen) ---
-    qr_png = os.path.join(QR_DIR, f"{token}.png")
-    if not os.path.exists(qr_png):
-        build_qr(token)
-
-    # --- Fuentes ---
-    _register_cert_fonts()
-    TITLE_FONT = _pick_font("Playfair-Bold", fallback_bold=True)   # para títulos/nivel
-    NAME_FONT  = _pick_font("GreatVibes",    fallback_bold=False)  # para el nombre
-    TEXT_FONT  = _pick_font("Arial",         fallback_bold=False)  # textos menores
-
-    # --- Lienzo ---
-    buf = BytesIO()
-    cpdf = canvas.Canvas(buf, pagesize=landscape(A4))
-    W, H = landscape(A4)
-
-    # --- Fondo (plantilla) ---
-    try:
-        if os.path.exists(TEMPLATE_PNG):
-            bg = ImageReader(TEMPLATE_PNG)
-            cpdf.drawImage(bg, 0, 0, width=W, height=H, mask='auto',
-                           preserveAspectRatio=True, anchor='c')
-        else:
-            cpdf.setFillColor(colors.whitesmoke)
-            cpdf.rect(0, 0, W, H, stroke=0, fill=1)
-    except Exception:
-        cpdf.setFillColor(colors.whitesmoke)
-        cpdf.rect(0, 0, W, H, stroke=0, fill=1)
-
-    # --- Color institucional ---
-    AEA_NAVY = colors.Color(0/255, 47/255, 122/255)
-
-    # --- Nivel/curso ---
-    nivel_txt = (e["curso"] or "").strip()
-    cpdf.setFillColor(AEA_NAVY)
-    cpdf.setFont(TITLE_FONT, 20)
-    cpdf.drawCentredString(W/2, H - 220, nivel_txt)
-
-    # --- Marca de agua (opcional) ---
-    wm_path = os.path.join(CERT_STATIC, "logo_marca_agua.png")
-    if os.path.exists(wm_path):
-        try:
-            wm = ImageReader(wm_path)
-            cpdf.saveState()
-            if hasattr(cpdf, "setFillAlpha"):
-                cpdf.setFillAlpha(0.08)
-            cpdf.drawImage(wm, W/2 - 210, H/2 - 210, width=420, height=420,
-                           mask='auto', preserveAspectRatio=True)
-            cpdf.restoreState()
-        except Exception:
-            pass
-
-    # --- Nombre del estudiante ---
-    name_txt = (e["nombre"] or "").strip()
-    cpdf.setFillColor(AEA_NAVY)
-    cpdf.setFont(NAME_FONT, 35)
-    cpdf.drawCentredString(W/2, H/2 + 10, name_txt)
-
-    # --- QR arriba a la derecha ---
-    QR_SIZE   = 90
-    RIGHT_MRG = 90
-    TOP_MRG   = 120
-    QR_X = W - RIGHT_MRG - QR_SIZE
-    QR_Y = H - TOP_MRG  - QR_SIZE
-
-    try:
-        qr_img = ImageReader(qr_png)
-        cpdf.drawImage(qr_img, QR_X, QR_Y, width=QR_SIZE, height=QR_SIZE,
-                       mask='auto', preserveAspectRatio=True)
-        cpdf.setFont(TEXT_FONT, 9)
-        cpdf.setFillColor(AEA_NAVY)
-        cpdf.drawCentredString(QR_X + QR_SIZE/2, QR_Y - 12, "Escanea para validar")
-    except Exception:
-        pass
-
-    # --- Fecha centrada abajo ---
-    try:
-        creado = datetime.fromisoformat(e["creado_en"])
-        fecha_txt = f"{creado.day} de {MESES_ES[creado.month-1].capitalize()} de {creado.year}"
-    except Exception:
-        fecha_txt = e.get("creado_en", "") or ""
-
-    cpdf.setFillColor(AEA_NAVY)
-    cpdf.setFont(TITLE_FONT, 16)
-    cpdf.drawCentredString(W/2, 60, fecha_txt)
-
-    # --- Finalizar ---
-    cpdf.showPage()
-    cpdf.save()
-    buf.seek(0)
-    filename = f"certificado_{name_txt.replace(' ', '_')}.pdf"
-    return send_file(buf, as_attachment=False, download_name=filename,
-                     mimetype="application/pdf")
-
-
-# =========================================
-# PDF – Boletín de Notas
-# =========================================
 @app.route("/cert/<token>/notas.pdf")
 def notas_pdf(token):
     with conn() as c:
@@ -844,7 +736,7 @@ def notas_pdf(token):
     detalle = _load_detalle_notas(e)
 
     nombre = (e["nombre"] or "").strip()
-    curso = (e["curso"] or "").strip()
+    curso  = (e["curso"] or "").strip()
 
     etapa, nivel = "", ""
     if " - " in curso:
@@ -854,15 +746,15 @@ def notas_pdf(token):
 
     # Nota final
     if detalle:
-        total = 0
+        total = 0.0
         for _, _, key in ACTIVIDADES:
             try:
                 total += float(detalle.get(key, 0) or 0)
-            except:
+            except Exception:
                 pass
         try:
             nota_final = float(detalle.get("punteo_final", total))
-        except:
+        except Exception:
             nota_final = total
     else:
         nota_final = float(e["nota"] or 0)
@@ -872,183 +764,120 @@ def notas_pdf(token):
     try:
         creado = datetime.fromisoformat(e["creado_en"])
         fecha_txt = f"{creado.day} de {MESES_ES[creado.month-1].capitalize()} de {creado.year}"
-    except:
+    except Exception:
         fecha_txt = e["creado_en"]
 
     idioma = (detalle.get("idioma") or "Inglés Americano") if detalle else "Inglés Americano"
     nivel_cefr = (detalle.get("nivel_cefr") or nivel) if detalle else nivel
 
-    # =====================
-    # A5 (media página)
-    # =====================
-    W, H = (420, 595)
-    buf = BytesIO()
-    cpdf = canvas.Canvas(buf, pagesize=(W, H))
+    # =========================
+    # USAR PDF COMO PLANTILLA
+    # =========================
+    plantilla_pdf = os.path.join(CERT_STATIC, "plantilla_notas.pdf")
+    if not os.path.exists(plantilla_pdf):
+        abort(500, description="No existe static/certs/plantilla_notas.pdf")
 
-    NAVY = colors.Color(0.07, 0.26, 0.33)
+    reader = PdfReader(plantilla_pdf)
+    base_page = reader.pages[0]
 
-    # Fondo blanco
-    cpdf.setFillColor(colors.white)
-    cpdf.rect(0, 0, W, H, stroke=0, fill=1)
+    W = float(base_page.mediabox.width)
+    H = float(base_page.mediabox.height)
 
-    # =====================
-    # MARCA DE AGUA LOGO
-    # =====================
-    logo_path = os.path.join(CERT_STATIC, "logo.png")  # static/certs/logo.png
+    # =========================
+    # OVERLAY: SOLO TEXTO/DATOS
+    # =========================
+    overlay_buf = BytesIO()
+    cpdf = canvas.Canvas(overlay_buf, pagesize=(W, H))
 
-    if os.path.exists(logo_path):
-        try:
-            logo = ImageReader(logo_path)
-            cpdf.saveState()
+    # =========================
+    # COORDENADAS (A4 vertical)  ✅ NO TOCAR
+    # =========================
+    X_NOMBRE = 150
+    Y_NOMBRE = H - 215
 
-            # Transparencia baja
-            if hasattr(cpdf, "setFillAlpha"):
-                cpdf.setFillAlpha(0.07)
+    X_NIVEL  = 125
+    Y_NIVEL  = H - 242
 
-            cpdf.drawImage(
-                logo,
-                W/2 - 120,
-                H/2 - 120,
-                width=240,
-                height=240,
-                mask='auto',
-                preserveAspectRatio=True
-            )
-            cpdf.restoreState()
-        except Exception as e:
-            print("Error logo:", e)
+    X_IDIOMA = W - 200
+    Y_IDIOMA = H - 220
 
-    # =====================
-    # Header centrado
-    # =====================
-    cpdf.setFillColor(NAVY)
-    cpdf.setFont("Helvetica-Bold", 15)
-    cpdf.drawCentredString(W/2, H-40, "BOLETÍN DE NOTAS")
+    X_FECHA  = W - 200
+    Y_FECHA  = H - 242
 
+    # ---- TABLA ---- ✅ NO TOCAR
+    X_OBT = 460
+    Y_FIRST_ROW = H - 330
+    ROW_H = 27
+
+    # Estilos
     cpdf.setFillColor(colors.black)
-    cpdf.setFont("Helvetica", 9)
-    cpdf.drawCentredString(W/2, H-58, "AMERICAN ENGLISH ACADEMY GT")
 
-    # =====================
-    # Datos
-    # =====================
-    y = H - 85
+    # Nombre
+    cpdf.setFont("Helvetica-Bold", 11)
+    cpdf.drawString(X_NOMBRE, Y_NOMBRE, nombre)
 
-    cpdf.setFont("Helvetica-Bold", 9)
-    cpdf.drawString(30, y, "Nombre:")
-    cpdf.setFont("Helvetica", 9)
-    cpdf.drawString(85, y, nombre)
+    # Idioma
+    cpdf.setFont("Helvetica", 11)
+    cpdf.drawString(X_IDIOMA, Y_IDIOMA, idioma)
 
-    cpdf.setFont("Helvetica-Bold", 9)
-    cpdf.drawString(230, y, "Idioma:")
-    cpdf.setFont("Helvetica", 9)
-    cpdf.drawString(285, y, idioma)
+    # Nivel
+    cpdf.setFont("Helvetica", 11)
+    cpdf.drawString(X_NIVEL, Y_NIVEL, nivel_cefr)
 
-    y -= 14
+    # Fecha
+    cpdf.setFont("Helvetica", 11)
+    cpdf.drawString(X_FECHA, Y_FECHA, fecha_txt)
 
-    cpdf.setFont("Helvetica-Bold", 9)
-    cpdf.drawString(30, y, "Nivel:")
-    cpdf.setFont("Helvetica", 9)
-    cpdf.drawString(85, y, nivel_cefr)
-
-    cpdf.setFont("Helvetica-Bold", 9)
-    cpdf.drawString(230, y, "Fecha:")
-    cpdf.setFont("Helvetica", 9)
-    cpdf.drawString(285, y, fecha_txt)
-
-    # =====================
-    # Tabla compacta
-    # =====================
-    data = [["ACTIVIDAD", "PTS", "OBT."]]
-
+    # =========================
+    # Actividades (OBT)
+    # =========================
     if detalle:
-        for label, pts, key in ACTIVIDADES:
-            val = detalle.get(key, "")
-            data.append([label, str(pts), "" if val=="" else str(val)])
+        cpdf.setFont("Helvetica", 11)
+        for i, (_, _, key) in enumerate(ACTIVIDADES):
+            v = detalle.get(key, "")
+            if v == "" or v is None:
+                continue
+            y = Y_FIRST_ROW - (i * ROW_H)
+            cpdf.drawCentredString(X_OBT, y, str(v))
 
-    data.append(["Punteo Final", str(TOTAL_PUNTOS), f"{nota_final:.0f}"])
-    data.append(["Resultado", "", estado])
+    # Punteo Final (fila después de actividades)
+    y_pf = Y_FIRST_ROW - (len(ACTIVIDADES) * ROW_H)
+    cpdf.setFont("Helvetica-Bold", 11)
+    cpdf.drawCentredString(X_OBT, y_pf, f"{nota_final:.0f}")
 
-    table_w = W - 60
-    col_w = [table_w*0.60, table_w*0.18, table_w*0.22]
+    # Resultado Final (fila siguiente)
+    y_res = y_pf - ROW_H
+    cpdf.setFont("Helvetica-Bold", 12)
 
-    t = RLTable(data, colWidths=col_w)
-    t.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), NAVY),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("FONTSIZE", (0,0), (-1,0), 9),
-        ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
-        ("FONTSIZE", (0,1), (-1,-1), 8.5),
-        ("ALIGN", (1,0), (-1,-1), "CENTER"),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-        ("ROWBACKGROUNDS", (0,1), (-1,-1),
-         [colors.white, colors.Color(0.97,0.97,0.97)]),
-    ]))
-
-    t.wrapOn(cpdf, table_w, H)
-    t.drawOn(cpdf, 30, y-280)
-
-    # =====================
-    # FIRMA MÁS GRANDE
-    # =====================
-    firma_path = os.path.join(CERT_STATIC, "firma.png")
-
-    FIRMA_X = 30
-    FIRMA_Y = 60
-    FIRMA_W = 200   # ← más grande
-    FIRMA_H = 70    # ← más alto
-
-    if os.path.exists(firma_path):
-        try:
-            firma = ImageReader(firma_path)
-            cpdf.drawImage(
-                firma,
-                FIRMA_X,
-                FIRMA_Y,
-                width=FIRMA_W,
-                height=FIRMA_H,
-                mask='auto',
-                preserveAspectRatio=True
-            )
-        except Exception as e:
-            print("Error firma:", e)
-
-    cpdf.line(FIRMA_X, FIRMA_Y-5, FIRMA_X+FIRMA_W, FIRMA_Y-5)
-    cpdf.setFont("Helvetica", 8)
-    cpdf.drawCentredString(FIRMA_X+FIRMA_W/2, FIRMA_Y-18, "Firma")
-
-    # =====================
-    # SELLO DERECHO
-    # =====================
-    sx = W - 160
-    base_y = 70
-
-    cpdf.setFont("Helvetica-Bold", 10)
-    cpdf.drawCentredString(sx+60, base_y+45, "AMERICAN")
-    cpdf.drawCentredString(sx+60, base_y+32, "ENGLISH")
-    cpdf.drawCentredString(sx+60, base_y+19, "ACADEMY GT")
-
-    cpdf.setFont("Helvetica", 7)
-    cpdf.drawCentredString(sx+60, base_y+6, "FREDY RODAS")
-    cpdf.drawCentredString(sx+60, base_y-4, "DIRECTOR ADMINISTRATIVO")
-
-    cpdf.setFont("Helvetica-Bold", 9)
-    cpdf.setFillColor(NAVY)
-    cpdf.drawCentredString(sx+60, base_y-18, "SELLO")
+    # ✅ SOLO ESTO CAMBIA: centrado visual en la celda grande de Resultado Final
+    X_RESULTADO = X_OBT - 60
+    cpdf.drawCentredString(X_RESULTADO, y_res, estado)
 
     cpdf.showPage()
     cpdf.save()
-    buf.seek(0)
+    overlay_buf.seek(0)
+
+    # =========================
+    # FUSIONAR: plantilla + overlay
+    # =========================
+    overlay_reader = PdfReader(overlay_buf)
+    overlay_page = overlay_reader.pages[0]
+
+    base_page.merge_page(overlay_page)
+
+    out = PdfWriter()
+    out.add_page(base_page)
+
+    out_buf = BytesIO()
+    out.write(out_buf)
+    out_buf.seek(0)
 
     return send_file(
-        buf,
+        out_buf,
         as_attachment=False,
         download_name=f"notas_{nombre.replace(' ','_')}.pdf",
         mimetype="application/pdf"
     )
-
-
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":

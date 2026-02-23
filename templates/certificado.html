@@ -54,6 +54,9 @@
         </dl>
 
         <div class="btns acciones">
+          {# ✅ Detectar si tiene URL de Drive guardada #}
+          {% set notas_url = (est.notas or '')|trim %}
+
           {% if est.estado == "Aprobado" %}
             
             <button class="btn btn-primary" onclick="window.print()">
@@ -65,17 +68,29 @@
               Ver Diploma
             </a>
 
-            <!-- ✅ Notas -->
-            <a class="btn btn-sm btn-outline" href="/cert/{{ est.token }}/notas.pdf">
-              Ver Notas
-            </a>
+            <!-- ✅ Notas: si tiene URL => Drive, si no => PDF -->
+            {% if notas_url %}
+              <a class="btn btn-sm btn-outline" href="{{ notas_url }}" target="_blank" rel="noopener">
+                Ver Notas (Drive)
+              </a>
+            {% else %}
+              <a class="btn btn-sm btn-outline" href="/cert/{{ est.token }}/notas.pdf">
+                Ver Notas (PDF)
+              </a>
+            {% endif %}
 
           {% else %}
 
             <!-- Aunque esté reprobado puede ver notas -->
-            <a class="btn btn-sm btn-outline" href="/cert/{{ est.token }}/notas.pdf">
-              Ver Notas
-            </a>
+            {% if notas_url %}
+              <a class="btn btn-sm btn-outline" href="{{ notas_url }}" target="_blank" rel="noopener">
+                Ver Notas (Drive)
+              </a>
+            {% else %}
+              <a class="btn btn-sm btn-outline" href="/cert/{{ est.token }}/notas.pdf">
+                Ver Notas (PDF)
+              </a>
+            {% endif %}
 
           {% endif %}
         </div>

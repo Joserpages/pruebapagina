@@ -48,7 +48,7 @@ import zipfile, re
 # ================== APP ÚNICA ==================
 # (No re-crear app más abajo; si necesitas añadir cosas, hazlo sobre esta misma instancia)
 #app = Flask(__name__)#
-app.secret_key = os.getenv("SECRET_KEY", "dev-secret")  # cámbialo en prod
+#app.secret_key = os.getenv("SECRET_KEY", "dev-secret")  # cámbialo en prod
 
 # Ejecutar siempre al cargar el módulo (también bajo gunicorn)
 
@@ -225,7 +225,7 @@ LOGO_WATERMARK = (
 )
 
 #app = Flask(__name__)#
-app.secret_key = "dev-secret"  # cambia en producción
+#app.secret_key = "dev-secret"#  # cambia en producción
 
 # Si sirves por LAN, usa tu IP local aquí para que el QR funcione
 FALLBACK_BASE_URL = "http://192.168.1.41:5000"
@@ -725,7 +725,26 @@ def certificate_view(token):
         nivel=nivel,
         qr_url=f"/static/qrs/{token}.png",
     )
+@app.route("/cert/<token>/pdf", endpoint="cert_pdf")
+def cert_pdf(token):
+    try:
+        pdf_bytes = _build_pdf_bytes_from_token(token)  # ya la tienes definida abajo
+    except Exception as ex:
+        abort(500, description=f"No se pudo generar el diploma: {repr(ex)}")
 
+    # (opcional) para nombre bonito del archivo
+    with conn() as c:
+        r = c.execute("SELECT nombre FROM estudiantes WHERE token=?", (token,)).fetchone()
+    nombre = (r["nombre"] if r else "certificado") or "certificado"
+
+    buf = BytesIO(pdf_bytes)
+    buf.seek(0)
+    return send_file(
+        buf,
+        as_attachment=False,
+        download_name=f"certificado_{nombre.replace(' ','_')}.pdf",
+        mimetype="application/pdf"
+    )
 @app.route("/cert/<token>/notas.pdf")
 def notas_pdf(token):
     with conn() as c:

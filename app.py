@@ -1,13 +1,23 @@
 ﻿# app.py  — versión completa
 
-import os, sqlite3, uuid, csv, unicodedata, json
+import os
+import re
+import csv
+import json
+import uuid
+import zipfile
+import sqlite3
+import tempfile
+import unicodedata
+
 from datetime import datetime
 from functools import wraps
 from io import BytesIO, StringIO
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    abort, flash, session, send_file, has_request_context
+    abort, flash, session, send_file, has_request_context,
+    jsonify, after_this_request
 )
 
 import qrcode
@@ -16,131 +26,196 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ---------- ReportLab (PDF) ----------
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Table as RLTable, TableStyle
-from pypdf import PdfReader, PdfWriter
-# =============== FIX BASE_DIR ====================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+from pypdf import PdfReader, PdfWriter
 
 # ---------- Excel (openpyxl) ----------
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
-from openpyxl import load_workbook
-from openpyxl import Workbook, load_workbook
 
+
+# =========================================
+# APP
+# =========================================
 app = Flask(__name__)
 app.secret_key = "dev-secret"  # cambia en producción
 
-from flask import Flask, render_template
-from flask import redirect, url_for
-from flask import Flask, render_template, request, redirect, url_for, abort, flash, session, send_file, has_request_context
-# ... (tus otros imports iguales)
-import zipfile, re
-
-
-# ================== APP ÚNICA ==================
-# (No re-crear app más abajo; si necesitas añadir cosas, hazlo sobre esta misma instancia)
-#app = Flask(__name__)#
-#app.secret_key = os.getenv("SECRET_KEY", "dev-secret")  # cámbialo en prod
-
-# Ejecutar siempre al cargar el módulo (también bajo gunicorn)
-
-
-# ================== CONFIG ==================
-# En Render, RENDER_EXTERNAL_URL queda definido. Si no existe (local), puedes usar tu LAN.
-FALLBACK_BASE_URL = (os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
-PASSING_GRADE = 60.0
-
-# después de crear app = Flask(__name__) y antes de renderizar plantillas
-
-
-
-# Si sirves por LAN, usa tu IP local aquí para que el QR funcione
-#FALLBACK_BASE_URL = "http://192.168.1.41:5000"
-
-# Nota mínima para aprobar
-
-#PASSING_GRADE = 60.0
-
-
 
 # =========================================
-# Context processors
+# CONFIG
 # =========================================
-from datetime import datetime
-
-@app.context_processor
-def inject_user():
-    return {
-        "current_user": session.get("user"),
-        "PASSING_GRADE": PASSING_GRADE,
-        "ETAPAS": ETAPAS,
-        "YEAR": datetime.now().year,   # <-- año dinámico para footer
-    }
-
-# --- Rutas útiles para plantilla/fuentes (ajusta si cambias) ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "db.sqlite3")
+QR_DIR = os.path.join(BASE_DIR, "static", "qrs")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 CERT_STATIC = os.path.join(STATIC_DIR, "certs")
 FONTS_DIR = os.path.join(CERT_STATIC, "fonts")
+
+os.makedirs(QR_DIR, exist_ok=True)
+os.makedirs(CERT_STATIC, exist_ok=True)
+os.makedirs(FONTS_DIR, exist_ok=True)
+
+FALLBACK_BASE_URL = (os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
+if not FALLBACK_BASE_URL:
+    FALLBACK_BASE_URL = "http://192.168.1.41:5000"
+
+PASSING_GRADE = 60.0
+MAX_ZIP_ITEMS = int(os.getenv("MAX_ZIP_ITEMS", "200"))
+
 TEMPLATE_PNG = os.path.join(CERT_STATIC, "plantilla_certificado.png")
+TEMPLATE_PNG_INGLES = os.path.join(CERT_STATIC, "plantilla_certificado_ingles.png")
+TEMPLATE_PNG_FRANCES = os.path.join(CERT_STATIC, "plantilla_certificado_frances.png")
+PLANTILLA_NOTAS_PDF = os.path.join(CERT_STATIC, "plantilla_notas.pdf")
+LOGO_WATERMARK = os.path.join(CERT_STATIC, "logo_marca_agua.png")
 
-# --- Registrar fuentes si existen (usa Helvetica como fallback) ---
-def _register_cert_fonts() -> None:
-    """
-    Registra fuentes buscándolas en ./static/certs/fonts y (si es Windows) en C:\Windows\Fonts.
-    Soporta nombres de archivo tal como los tienes:
-      - GreatVibes-Regular.ttf       -> "GreatVibes"
-      - PlayfairDisplay-Italic-VariableFont_wght.ttf o PlayfairDisplay-Bold.ttf -> "Playfair-Bold"
-      - ARIAL.TTF / Arial.ttf        -> "Arial"
-      - ARIALBD 1.TTF / ArialBD.ttf  -> "Arial-Bold"
-    """
-    import os
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
 
-    def _try_register(name_alias: str, file_names: list, base_dir: str):
-        if not base_dir or not os.path.isdir(base_dir):
-            return
-        lower = {f.lower(): f for f in os.listdir(base_dir)}
-        for fn in file_names:
-            real = lower.get(fn.lower())
-            if real:
-                try:
-                    pdfmetrics.registerFont(TTFont(name_alias, os.path.join(base_dir, real)))
-                    return
-                except Exception:
-                    pass
+# =========================================
+# CATÁLOGOS
+# =========================================
+PROGRAMAS = {
+    "Inglés": {
+        "Principiante": ["PRE A1", "A1", "A1 PLUS", "A1 BASICO"],
+        "Pre Intermedia": ["PRE A2", "A2", "A2 Plus"],
+        "Intermedia": ["PRE B1", "B1", "B1 PLUS", "PRE B2", "B2", "B2 PLUS"],
+        "Avanzada": ["PRE C1", "C1", "C1 PLUS", "PRE C2", "C2", "C2 PLUS"],
+        "Curso de vacaciones": ["CVacaciones 1"],
+    },
+    "Francés": {
+        "Principiante": ["PRE A1", "A1", "A1 PLUS", "A1 BASICO"],
+        "Pre Intermedia": ["PRE A2", "A2", "A2 Plus"],
+        "Intermedia": ["PRE B1", "B1", "B1 PLUS", "PRE B2", "B2", "B2 PLUS"],
+        "Avanzada": ["PRE C1", "C1", "C1 PLUS", "PRE C2", "C2", "C2 PLUS"],
+        "Curso de vacaciones": ["CVacaciones 1"],
+    }
+}
 
-    # 1) ./static/certs/fonts
-    _try_register("GreatVibes", ["GreatVibes-Regular.ttf"], FONTS_DIR)
-    _try_register("Playfair-Bold", ["PlayfairDisplay-Italic-VariableFont_wght.ttf","PlayfairDisplay-Bold.ttf"], FONTS_DIR)
-    _try_register("Arial", ["ARIAL.TTF","Arial.ttf"], FONTS_DIR)
-    _try_register("Arial-Bold", ["ARIALBD 1.TTF","ARIALBD.TTF","Arial Bold.ttf","arialbd.ttf"], FONTS_DIR)
+# Compatibilidad con plantillas viejas
+ETAPAS = PROGRAMAS["Inglés"]
 
-    # 2) Windows fallback
+ACTIVIDADES = [
+    ("Examen 1", 10, "examen_1"),
+    ("Examen 2", 10, "examen_2"),
+    ("Lectura", 10, "lectura"),
+    ("Escritura", 10, "escritura"),
+    ("Vocabulario", 10, "vocabulario"),
+    ("Club de Conversación", 10, "club_conversacion"),
+    ("Comprensión Auditiva", 10, "comprension_auditiva"),
+    ("Examen General", 30, "examen_general"),
+]
+TOTAL_PUNTOS = 100
+
+ETAPA_ALIASES = {
+    "preintermedio": "Pre Intermedia",
+    "preintermedia": "Pre Intermedia",
+    "preintermediaa": "Pre Intermedia",
+    "preintermediate": "Pre Intermedia",
+}
+
+MESES_ES = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
+]
+
+
+# =========================================
+# HELPERS
+# =========================================
+def strip_accents_py(s: str) -> str:
+    if not s:
+        return ""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", s)
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def _norm_key(s: str) -> str:
+    return strip_accents_py(s or "").lower().replace(" ", "").replace("_", "").replace("-", "")
+
+
+def get_programa(programa: str) -> str:
+    programa = (programa or "").strip()
+    if programa in PROGRAMAS:
+        return programa
+    if _norm_key(programa) in ("frances", "francais"):
+        return "Francés"
+    return "Inglés"
+
+
+def get_etapas(programa: str) -> dict:
+    return PROGRAMAS.get(get_programa(programa), PROGRAMAS["Inglés"])
+
+
+def canonical_etapa(programa: str, etapa: str) -> str:
+    n = _norm_key(etapa)
+    etapas = get_etapas(programa)
+
+    for k in etapas.keys():
+        if _norm_key(k) == n:
+            return k
+
+    if n in ETAPA_ALIASES:
+        return ETAPA_ALIASES[n]
+
+    return etapa
+
+
+def canonical_nivel(programa: str, etapa_canon: str, nivel: str) -> str:
+    n = _norm_key(nivel)
+    opciones = get_etapas(programa).get(etapa_canon, []) or []
+    for opt in opciones:
+        if _norm_key(opt) == n:
+            return opt
+    return nivel
+
+
+def etapa_keys(programa: str, etapa_canon: str) -> list[str]:
+    keys = {_norm_key(etapa_canon)}
+    for alias_norm, canon in ETAPA_ALIASES.items():
+        if canon == etapa_canon:
+            keys.add(alias_norm)
+    return sorted(keys)
+
+
+def _fecha_es(dt: datetime) -> str:
     try:
-        win = r"C:\Windows\Fonts"
-        _try_register("Arial", ["arial.ttf","ARIAL.TTF"], win)
-        _try_register("Arial-Bold", ["arialbd.ttf","ARIALBD.TTF"], win)
+        return f"{dt.day} de {MESES_ES[dt.month - 1].capitalize()} de {dt.year}"
     except Exception:
-        pass
+        return dt.strftime("%Y-%m-%d")
+
+
+def conn():
+    c = sqlite3.connect(DB_PATH)
+    c.row_factory = sqlite3.Row
+    c.create_function("strip_accents", 1, strip_accents_py)
+    c.create_function("norm_key", 1, _norm_key)
+    return c
+
+
+def _ensure_paths():
+    os.makedirs(QR_DIR, exist_ok=True)
+    os.makedirs(CERT_STATIC, exist_ok=True)
+    os.makedirs(FONTS_DIR, exist_ok=True)
+
 
 def _has_column(colname: str) -> bool:
     with conn() as c:
         cols = [r[1] for r in c.execute("PRAGMA table_info(estudiantes)").fetchall()]
     return colname in cols
 
+
 def _get_notas_value(row: sqlite3.Row) -> str:
-    # Soporta DB vieja (columna) y la nueva (notas)
-    return (row["notas"] if "notas" in row.keys() and row["notas"] else
-            (row["columna"] if "columna" in row.keys() else ""))
+    return (
+        row["notas"] if "notas" in row.keys() and row["notas"]
+        else (row["columna"] if "columna" in row.keys() else "")
+    )
+
 
 def _load_detalle_notas(row: sqlite3.Row) -> dict:
     try:
@@ -154,216 +229,136 @@ def _load_detalle_notas(row: sqlite3.Row) -> dict:
     except Exception:
         return {}
 
+
+def _register_cert_fonts() -> None:
+    def _try_register(alias: str, filenames: list[str], folder: str):
+        if not folder or not os.path.isdir(folder):
+            return
+        lower = {f.lower(): f for f in os.listdir(folder)}
+        for cand in filenames:
+            real = lower.get(cand.lower())
+            if real:
+                try:
+                    pdfmetrics.registerFont(TTFont(alias, os.path.join(folder, real)))
+                    return
+                except Exception:
+                    pass
+
+    _try_register("GreatVibes", ["GreatVibes-Regular.ttf"], FONTS_DIR)
+    _try_register(
+        "Playfair-Bold",
+        ["PlayfairDisplay-Bold.ttf", "PlayfairDisplay-Italic-VariableFont_wght.ttf"],
+        FONTS_DIR
+    )
+    _try_register("Arial", ["ARIAL.TTF", "Arial.ttf"], FONTS_DIR)
+    _try_register("Arial-Bold", ["ARIALBD 1.TTF", "ARIALBD.TTF", "arialbd.ttf"], FONTS_DIR)
+
+    try:
+        win = r"C:\Windows\Fonts"
+        _try_register("Arial", ["arial.ttf", "ARIAL.TTF"], win)
+        _try_register("Arial-Bold", ["arialbd.ttf", "ARIALBD.TTF"], win)
+    except Exception:
+        pass
+
+
 def _pick_font(name: str, fallback_bold: bool = False) -> str:
-    """
-    Devuelve el nombre de fuente registrada; si no, Arial/Arial-Bold/Helvetica.
-    """
-    from reportlab.pdfbase import pdfmetrics
     regs = set(pdfmetrics.getRegisteredFontNames())
     if name in regs:
         return name
-    if fallback_bold and "Arial-Bold" in regs:
-        return "Arial-Bold"
+    if fallback_bold:
+        if "Arial-Bold" in regs:
+            return "Arial-Bold"
+        return "Helvetica-Bold"
     if "Arial" in regs:
         return "Arial"
     return "Helvetica"
 
-def _ensure_paths():
-    # Garantiza rutas usadas en PDF
-    os.makedirs(QR_DIR, exist_ok=True)
-    os.makedirs(CERT_STATIC, exist_ok=True)
-    os.makedirs(FONTS_DIR, exist_ok=True)
 
-def _pick_font(name: str, fallback_bold: bool = False) -> str:
-    """Devuelve el nombre de fuente disponible o Helvetica como reserva."""
-    available = set(pdfmetrics.getRegisteredFontNames())
-    if name in available:
-        return name
-    if fallback_bold and "Arial-Bold" in available:
-        return "Arial-Bold"
-    if "Arial" in available:
-        return "Arial"
-    return "Helvetica"
-
-# Español:  '2 de Septiembre de 2025'
-MESES_ES = ["enero","febrero","marzo","abril","mayo","junio",
-            "julio","agosto","septiembre","octubre","noviembre","diciembre"]
-
-def _fecha_es(dt: datetime) -> str:
-    try:
-        d = dt.day
-        m = MESES_ES[dt.month-1].capitalize()
-        y = dt.year
-        return f"{d} de {m} de {y}"
-    except Exception:
-        return dt.strftime("%Y-%m-%d")
-
-# =========================================
-# Configuración / Paths
-# =========================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH  = os.path.join(BASE_DIR, "db.sqlite3")
-QR_DIR   = os.path.join(BASE_DIR, "static", "qrs")
-os.makedirs(QR_DIR, exist_ok=True)
-
-# Donde intentaremos encontrar fuentes (pon aquí tus .ttf)
-CERT_FONTS_DIR = os.path.join(BASE_DIR, "certs")
-os.makedirs(CERT_FONTS_DIR, exist_ok=True)
-
-# Marca de agua / plantilla (intenta varios lugares)
-PLANTILLA_IMG = (
-    os.path.join(BASE_DIR, "plantilla_certificado.png")
-    if os.path.exists(os.path.join(BASE_DIR, "plantilla_certificado.png"))
-    else os.path.join(BASE_DIR, "static", "img", "plantilla_certificado.png")
-)
-
-# Logo grande y tenue (opcional)
-LOGO_WATERMARK = (
-    os.path.join(BASE_DIR, "logo_marca_agua.png")
-    if os.path.exists(os.path.join(BASE_DIR, "logo_marca_agua.png"))
-    else os.path.join(BASE_DIR, "static", "img", "logo_marca_agua.png")
-)
-
-#app = Flask(__name__)#
-#app.secret_key = "dev-secret"#  # cambia en producción
-
-# Si sirves por LAN, usa tu IP local aquí para que el QR funcione
-FALLBACK_BASE_URL = "http://192.168.1.41:5000"
-
-# Nota mínima para aprobar
-PASSING_GRADE = 60.0
+def _safe_filename(name: str) -> str:
+    name = (name or "").strip()
+    name = re.sub(r"[^a-zA-Z0-9._-]+", "_", name)
+    name = name.strip("._-") or "certificado"
+    return name[:80]
 
 
-# =========================================
-# Catálogo de Etapas / Niveles (se muestra; se guarda como una cadena en 'curso')
-# =========================================
-ETAPAS = {
-    "Principiante": ["PRE A1", "A1", "A1 PLUS", "A1 BASICO"],
-    "Pre Intermedia":   ["PRE A2", "A2", "A2 Plus"],
-    "Intermedia":   ["PRE B1", "B1", "B1 PLUS", "PRE B2", "B2", "B2 PLUS"],
-    "Avanzada":     ["PRE C1","C1","C1 PLUS", "PRE C2", "C2", "C2 PLUS"],
-    "Curso de vacaciones": ["CVacaciones 1"],
-}
-
-# =========================================
-# Catálogo de actividades (Boletín de notas)
-# =========================================
-ACTIVIDADES = [
-    ("Examen 1", 10, "examen_1"),
-    ("Examen 2", 10, "examen_2"),
-    ("Lectura", 10, "lectura"),
-    ("Escritura", 10, "escritura"),
-    ("Vocabulario", 10, "vocabulario"),
-    ("Club de Conversación", 10, "club_conversacion"),
-    ("Comprensión Auditiva", 10, "comprension_auditiva"),
-    ("Examen General", 30, "examen_general"),
-]
-TOTAL_PUNTOS = 100
-
-def _norm_key(s: str) -> str:
-    return strip_accents_py(s or "").lower().replace(" ", "").replace("_", "").replace("-", "")
-
-# Aliases opcionales (por si vienen variaciones raras)
-ETAPA_ALIASES = {
-    "preintermedio": "Pre Intermedia",
-    "preintermedia": "Pre Intermedia",
-    "preintermediaa": "Pre Intermedia",
-    "preintermediate": "Pre Intermedia",
-}
-
-
-def canonical_etapa(etapa: str) -> str:
-    n = _norm_key(etapa)
-    # 1) si coincide con una key real de ETAPAS (aunque venga con distinto formato)
-    for k in ETAPAS.keys():
-        if _norm_key(k) == n:
-            return k
-    # 2) si viene en alias
-    if n in ETAPA_ALIASES:
-        return ETAPA_ALIASES[n]
-    # 3) si no, devolvemos tal cual
-    return etapa
-
-def canonical_nivel(etapa_canon: str, nivel: str) -> str:
-    n = _norm_key(nivel)
-    opciones = ETAPAS.get(etapa_canon, []) or []
-    for opt in opciones:
-        if _norm_key(opt) == n:
-            return opt
-    return nivel
-
-def etapa_keys(etapa_canon: str) -> list[str]:
-    """
-    Devuelve todas las llaves normalizadas que deben considerarse equivalentes
-    a la etapa canónica (incluye aliases como preintermedio -> Pre Intermedia).
-    """
-    keys = {_norm_key(etapa_canon)}
-    for alias_norm, canon in ETAPA_ALIASES.items():
-        if canon == etapa_canon:
-            keys.add(alias_norm)  # alias ya viene normalizado
-    return sorted(keys)
-
-# =========================================
-# Helpers (acentos / DB)
-# =========================================
-def strip_accents_py(s: str) -> str:
-    if not s:
+def _to_datetime_local_str(db_str: str) -> str:
+    if not db_str:
         return ""
-    return "".join(ch for ch in unicodedata.normalize("NFD", s)
-                   if unicodedata.category(ch) != "Mn")
+    try:
+        dt = datetime.strptime(db_str, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%Y-%m-%dT%H:%M")
+    except Exception:
+        pass
+    try:
+        dt = datetime.fromisoformat(db_str)
+        return dt.strftime("%Y-%m-%dT%H:%M")
+    except Exception:
+        return ""
 
 
-def conn():
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    c.create_function("strip_accents", 1, strip_accents_py)
-    c.create_function("norm_key", 1, _norm_key)  # ✅ NUEVO: normaliza igual que en Python
-    return c
+def _parse_datetime_local(s: str):
+    try:
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M")
+    except Exception:
+        return None
 
 
+app.jinja_env.filters["dtlocal"] = _to_datetime_local_str
 
+
+# =========================================
+# CONTEXT PROCESSOR
+# =========================================
+@app.context_processor
+def inject_user():
+    return {
+        "current_user": session.get("user"),
+        "PASSING_GRADE": PASSING_GRADE,
+        "ETAPAS": ETAPAS,
+        "PROGRAMAS": PROGRAMAS,
+        "YEAR": datetime.now().year,
+    }
+
+
+# =========================================
+# DB INIT
+# =========================================
 def init_db():
     with conn() as c:
         c.execute("""
         CREATE TABLE IF NOT EXISTS estudiantes(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          token   TEXT UNIQUE NOT NULL,
-          nombre  TEXT NOT NULL,
-          curso   TEXT NOT NULL,
-          nota    REAL NOT NULL,
-          estado  TEXT CHECK(estado IN ('Aprobado','Reprobado')) NOT NULL,
+          token TEXT UNIQUE NOT NULL,
+          nombre TEXT NOT NULL,
+          curso TEXT NOT NULL,
+          nota REAL NOT NULL,
+          estado TEXT CHECK(estado IN ('Aprobado','Reprobado')) NOT NULL,
           creado_en TEXT NOT NULL
         )""")
 
-        # notas
         try:
             c.execute("ALTER TABLE estudiantes ADD COLUMN notas TEXT")
         except Exception:
             pass
 
-        # ✅ NUEVO: programa/curso general
         try:
             c.execute("ALTER TABLE estudiantes ADD COLUMN programa TEXT")
         except Exception:
             pass
 
-        # ✅ poner valor por defecto a los viejos
         try:
-            c.execute("UPDATE estudiantes SET programa='AEA' WHERE programa IS NULL OR programa=''")
+            c.execute("UPDATE estudiantes SET programa='Inglés' WHERE programa IS NULL OR programa='' OR programa='AEA'")
         except Exception:
             pass
 
-        # ✅ NUEVO: detalle de notas (JSON con actividades)
         try:
             c.execute("ALTER TABLE estudiantes ADD COLUMN detalle_notas TEXT")
         except Exception:
             pass
 
 
-
 def init_users():
     with conn() as c:
-        # Crear tabla usuarios con rol
         c.execute("""
         CREATE TABLE IF NOT EXISTS usuarios(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -373,19 +368,16 @@ def init_users():
           creado_en TEXT NOT NULL
         )""")
 
-        # Asegurar columna rol si la tabla ya existía
         try:
             c.execute("ALTER TABLE usuarios ADD COLUMN rol TEXT NOT NULL DEFAULT 'admin'")
         except Exception:
             pass
 
-        # Verificar si ya existen usuarios
         existentes = c.execute("SELECT username FROM usuarios").fetchall()
         existentes = {u["username"] for u in existentes}
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # ADMIN FUERTE
         if "rodasestuardo146@gmail.com" not in existentes:
             c.execute(
                 """INSERT INTO usuarios(username,password_hash,rol,creado_en)
@@ -399,7 +391,6 @@ def init_users():
             )
             print("✔ Admin fuerte creado")
 
-        # SUBADMIN
         if "SubAdminAEA" not in existentes:
             c.execute(
                 """INSERT INTO usuarios(username,password_hash,rol,creado_en)
@@ -414,39 +405,23 @@ def init_users():
             print("✔ Subadmin creado")
 
 
-
 def seed_if_empty():
     with conn() as c:
         n = c.execute("SELECT COUNT(*) FROM estudiantes").fetchone()[0]
         if n == 0:
             token = uuid.uuid4().hex
             estado = "Aprobado" if 85 >= PASSING_GRADE else "Reprobado"
-            c.execute("""INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en)
-                         VALUES(?,?,?,?,?,?)""",
-                      (token, "Alumno Demo", "Intermedia - B1", 85, estado,
-                       datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            c.execute("""
+                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,programa)
+                VALUES(?,?,?,?,?,?,?)
+            """, (
+                token, "Alumno Demo", "Intermedia - B1", 85, estado,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Inglés"
+            ))
             build_qr(token)
             print(f"➡ Alumno demo creado. Token: {token}")
 
-def _to_datetime_local_str(db_str: str) -> str:
-    """
-    'YYYY-MM-DD HH:MM:SS' -> 'YYYY-MM-DDTHH:MM' para prellenar el input.
-    """
-    if not db_str:
-        return ""
-    try:
-        dt = datetime.strptime(db_str, "%Y-%m-%d %H:%M:%S")
-        return dt.strftime("%Y-%m-%dT%H:%M")
-    except Exception:
-        pass
-    try:
-        dt = datetime.fromisoformat(db_str)
-        return dt.strftime("%Y-%m-%dT%H:%M")
-    except Exception:
-        return ""
-
-# ⬇️ REGISTRO DEL FILTRO (después de definir la función)
-app.jinja_env.filters['dtlocal'] = _to_datetime_local_str
 
 with app.app_context():
     try:
@@ -454,17 +429,13 @@ with app.app_context():
         init_users()
         seed_if_empty()
     except Exception as e:
-        # Útil para ver en logs de Render si algo falla al migrar
         print("INIT ERROR:", repr(e))
+
 
 # =========================================
 # QR
 # =========================================
 def build_qr(token: str):
-    """
-    Genera /static/qrs/<token>.png apuntando a /cert/<token>.
-    Usa RENDER_EXTERNAL_URL en Render; en local, usa request.host_url.
-    """
     path = url_for("ver_cert", token=token, _external=False)
 
     if has_request_context():
@@ -473,7 +444,7 @@ def build_qr(token: str):
         base = (os.environ.get("RENDER_EXTERNAL_URL") or FALLBACK_BASE_URL or "").rstrip("/")
 
     if not base:
-        base = "http://127.0.0.1:5000"  # último recurso en local
+        base = "http://127.0.0.1:5000"
 
     url = f"{base}{path}"
 
@@ -481,8 +452,9 @@ def build_qr(token: str):
     img = qrcode.make(url)
     img.save(os.path.join(QR_DIR, f"{token}.png"))
 
+
 # =========================================
-# Auth helpers
+# AUTH
 # =========================================
 def login_required(view):
     @wraps(view)
@@ -513,37 +485,18 @@ def role_required(*roles):
         return wrapper
     return decorator
 
-def _safe_filename(name: str) -> str:
-    name = (name or "").strip()
-    name = re.sub(r"[^a-zA-Z0-9._-]+", "_", name)
-    name = name.strip("._-") or "certificado"
-    return name[:80]
-
-
-
-# --- Helpers para el <input type="datetime-local"> ---
-def _parse_datetime_local(s: str):
-    """'YYYY-MM-DDTHH:MM' -> datetime (o None si es inválido)."""
-    try:
-        return datetime.strptime(s, "%Y-%m-%dT%H:%M")
-    except Exception:
-        return None
-
-
-
 
 # =========================================
-# Rutas públicas
+# RUTAS PÚBLICAS
 # =========================================
 @app.route("/")
 def index():
-    # redirige a /validar (Render devuelve 302 + 200 en /validar)
     return redirect(url_for("validar"))
+
 
 @app.route("/validar", methods=["GET", "POST"])
 def validar():
     if request.method == "POST":
-        # --- detección por texto en "nombre" ---
         nombre_trigger = (request.form.get("nombre") or "").strip()
         trigger_norm = strip_accents_py(nombre_trigger).lower()
 
@@ -555,14 +508,13 @@ def validar():
         }
         if trigger_norm in ADMIN_TRIGGERS:
             return redirect(url_for("login", next=url_for("admin")))
-        # ------------------------------------------------
 
+        programa = get_programa(request.form.get("programa") or "Inglés")
         etapa = (request.form.get("etapa") or "").strip()
         nivel = (request.form.get("nivel") or "").strip()
 
-        # Normalizar etapa/nivel a “canónico”
-        etapa = canonical_etapa(etapa)
-        nivel = canonical_nivel(etapa, nivel)
+        etapa = canonical_etapa(programa, etapa)
+        nivel = canonical_nivel(programa, etapa, nivel)
 
         if not etapa or not nivel:
             flash("Selecciona etapa y nivel.", "error")
@@ -573,13 +525,12 @@ def validar():
             flash("Ingresa el nombre del estudiante.", "error")
             return redirect(url_for("validar"))
 
-        # 1) Buscar por nombre (tolerante a acentos)
         nombre_q = f"%{strip_accents_py(nombre).lower()}%"
 
         with conn() as cdb:
             rows = cdb.execute(
                 """
-                SELECT id, token, nombre, curso, nota, estado, creado_en
+                SELECT id, token, nombre, curso, nota, estado, creado_en, programa
                 FROM estudiantes
                 WHERE lower(strip_accents(nombre)) LIKE ?
                 ORDER BY nombre ASC, curso ASC
@@ -587,13 +538,14 @@ def validar():
                 (nombre_q,)
             ).fetchall()
 
-        # 2) Filtrar por etapa/nivel de forma ROBUSTA (comparando normalizados)
         etapa_key = _norm_key(etapa)
         nivel_key = _norm_key(nivel)
+        programa_key = _norm_key(programa)
 
         filas = []
         for r in rows:
             curso_db = (r["curso"] or "").strip()
+            programa_db = get_programa(r["programa"] or "Inglés")
 
             etapa_db, nivel_db = "", ""
             if " - " in curso_db:
@@ -602,11 +554,14 @@ def validar():
                 etapa_db = curso_db
                 nivel_db = ""
 
-            # Canonizar y comparar por clave normalizada
-            etapa_db = canonical_etapa(etapa_db.strip())
-            nivel_db = canonical_nivel(etapa_db, (nivel_db or "").strip())
+            etapa_db = canonical_etapa(programa_db, etapa_db.strip())
+            nivel_db = canonical_nivel(programa_db, etapa_db, (nivel_db or "").strip())
 
-            if _norm_key(etapa_db) == etapa_key and _norm_key(nivel_db) == nivel_key:
+            if (
+                _norm_key(programa_db) == programa_key and
+                _norm_key(etapa_db) == etapa_key and
+                _norm_key(nivel_db) == nivel_key
+            ):
                 filas.append(r)
 
         if not filas:
@@ -621,81 +576,26 @@ def validar():
             "token": r["token"],
             "nombre": r["nombre"],
             "curso": r["curso"],
+            "programa": r["programa"],
             "cert_url": url_for("ver_cert", token=r["token"], _external=True),
-            "pdf_url":  url_for("cert_pdf",  token=r["token"])
+            "pdf_url": url_for("cert_pdf", token=r["token"])
         } for r in filas]
 
         return render_template(
             "validar.html",
             resultados=resultados,
             q_nombre=nombre,
+            q_programa=programa,
             q_etapa=etapa,
             q_nivel=nivel
         )
 
     return render_template("validar.html")
 
+
 # =========================================
-# PDF – Diploma horizontal estilo AEA
+# PDF – CERTIFICADO
 # =========================================
-
-def _register_cert_fonts() -> None:
-    """
-    Registra fuentes buscándolas en ./static/certs/fonts y (si es Windows) en C:\Windows\Fonts.
-    Alias que usaremos en el PDF:
-      - GreatVibes-Regular.ttf              -> "GreatVibes"
-      - PlayfairDisplay-Bold.ttf (o Variable) -> "Playfair-Bold"
-      - ARIAL.TTF / Arial.ttf               -> "Arial"
-      - ARIALBD 1.TTF / ARIALBD.TTF         -> "Arial-Bold"
-    """
-    import os
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-
-    def _try(alias: str, candidates: list[str], folder: str):
-        if not folder or not os.path.isdir(folder):
-            return
-        lower = {f.lower(): f for f in os.listdir(folder)}
-        for cand in candidates:
-            real = lower.get(cand.lower())
-            if real:
-                try:
-                    pdfmetrics.registerFont(TTFont(alias, os.path.join(folder, real)))
-                    return
-                except Exception:
-                    pass
-
-    # 1) Proyecto
-    _try("GreatVibes",   ["GreatVibes-Regular.ttf"], FONTS_DIR)
-    _try("Playfair-Bold",["PlayfairDisplay-Bold.ttf",
-                          "PlayfairDisplay-Italic-VariableFont_wght.ttf"], FONTS_DIR)
-    _try("Arial",        ["ARIAL.TTF", "Arial.ttf"], FONTS_DIR)
-    _try("Arial-Bold",   ["ARIALBD 1.TTF", "ARIALBD.TTF", "arialbd.ttf"], FONTS_DIR)
-
-    # 2) Fallback Windows
-    win = r"C:\Windows\Fonts"
-    _try("Arial",      ["arial.ttf", "ARIAL.TTF"], win)
-    _try("Arial-Bold", ["arialbd.ttf", "ARIALBD.TTF"], win)
-
-
-
-def _pick_font(name: str, fallback_bold: bool = False) -> str:
-    """
-    Devuelve un nombre de fuente registrada si existe; sino, Arial / Arial-Bold / Helvetica.
-    """
-    regs = set(pdfmetrics.getRegisteredFontNames())
-    if name in regs:
-        return name
-    if fallback_bold:
-        if "Arial-Bold" in regs:
-            return "Arial-Bold"
-        return "Helvetica-Bold"
-    else:
-        if "Arial" in regs:
-            return "Arial"
-        return "Helvetica"
-
-
 @app.route("/cert/<token>", endpoint="ver_cert")
 def certificate_view(token):
     with conn() as c:
@@ -703,17 +603,15 @@ def certificate_view(token):
     if not row:
         abort(404)
 
-    # Pasamos a dict y garantizamos 'notas'
     e = dict(row)
     e["notas"] = e.get("notas") or e.get("columna") or ""
+    e["programa"] = get_programa(e.get("programa") or "Inglés")
 
-    # Separar etapa y nivel
     etapa, nivel = "", ""
     curso_val = (e.get("curso") or "").strip()
     if " - " in curso_val:
         etapa, nivel = curso_val.split(" - ", 1)
 
-    # Asegurar QR
     png = os.path.join(QR_DIR, f"{token}.png")
     if not os.path.exists(png):
         build_qr(token)
@@ -723,16 +621,18 @@ def certificate_view(token):
         est=e,
         etapa=etapa,
         nivel=nivel,
+        programa=e["programa"],
         qr_url=f"/static/qrs/{token}.png",
     )
+
+
 @app.route("/cert/<token>/pdf", endpoint="cert_pdf")
 def cert_pdf(token):
     try:
-        pdf_bytes = _build_pdf_bytes_from_token(token)  # ya la tienes definida abajo
+        pdf_bytes = _build_pdf_bytes_from_token(token)
     except Exception as ex:
         abort(500, description=f"No se pudo generar el diploma: {repr(ex)}")
 
-    # (opcional) para nombre bonito del archivo
     with conn() as c:
         r = c.execute("SELECT nombre FROM estudiantes WHERE token=?", (token,)).fetchone()
     nombre = (r["nombre"] if r else "certificado") or "certificado"
@@ -742,9 +642,11 @@ def cert_pdf(token):
     return send_file(
         buf,
         as_attachment=False,
-        download_name=f"certificado_{nombre.replace(' ','_')}.pdf",
+        download_name=f"certificado_{nombre.replace(' ', '_')}.pdf",
         mimetype="application/pdf"
     )
+
+
 @app.route("/cert/<token>/notas.pdf")
 def notas_pdf(token):
     with conn() as c:
@@ -755,7 +657,8 @@ def notas_pdf(token):
     detalle = _load_detalle_notas(e)
 
     nombre = (e["nombre"] or "").strip()
-    curso  = (e["curso"] or "").strip()
+    curso = (e["curso"] or "").strip()
+    programa = get_programa(e["programa"] or "Inglés")
 
     etapa, nivel = "", ""
     if " - " in curso:
@@ -763,7 +666,6 @@ def notas_pdf(token):
     else:
         etapa = curso
 
-    # Nota final
     if detalle:
         total = 0.0
         for _, _, key in ACTIVIDADES:
@@ -782,74 +684,59 @@ def notas_pdf(token):
 
     try:
         creado = datetime.fromisoformat(e["creado_en"])
-        fecha_txt = f"{creado.day} de {MESES_ES[creado.month-1].capitalize()} de {creado.year}"
+        fecha_txt = _fecha_es(creado)
     except Exception:
         fecha_txt = e["creado_en"]
 
-    idioma = (detalle.get("idioma") or "Inglés Americano") if detalle else "Inglés Americano"
-    nivel_cefr = (detalle.get("nivel_cefr") or nivel) if detalle else nivel
+    if detalle:
+        idioma = detalle.get("idioma") or ("Francés" if programa == "Francés" else "Inglés Americano")
+        nivel_cefr = detalle.get("nivel_cefr") or nivel
+    else:
+        idioma = "Francés" if programa == "Francés" else "Inglés Americano"
+        nivel_cefr = nivel
 
-    # =========================
-    # USAR PDF COMO PLANTILLA
-    # =========================
-    plantilla_pdf = os.path.join(CERT_STATIC, "plantilla_notas.pdf")
-    if not os.path.exists(plantilla_pdf):
+    if not os.path.exists(PLANTILLA_NOTAS_PDF):
         abort(500, description="No existe static/certs/plantilla_notas.pdf")
 
-    reader = PdfReader(plantilla_pdf)
+    reader = PdfReader(PLANTILLA_NOTAS_PDF)
     base_page = reader.pages[0]
 
     W = float(base_page.mediabox.width)
     H = float(base_page.mediabox.height)
 
-    # =========================
-    # OVERLAY: SOLO TEXTO/DATOS
-    # =========================
     overlay_buf = BytesIO()
     cpdf = canvas.Canvas(overlay_buf, pagesize=(W, H))
 
-    # =========================
-    # COORDENADAS (A4 vertical)  ✅ NO TOCAR
-    # =========================
     X_NOMBRE = 150
     Y_NOMBRE = H - 215
 
-    X_NIVEL  = 125
-    Y_NIVEL  = H - 242
+    X_NIVEL = 125
+    Y_NIVEL = H - 242
 
     X_IDIOMA = W - 200
     Y_IDIOMA = H - 220
 
-    X_FECHA  = W - 200
-    Y_FECHA  = H - 242
+    X_FECHA = W - 200
+    Y_FECHA = H - 242
 
-    # ---- TABLA ---- ✅ NO TOCAR
     X_OBT = 460
     Y_FIRST_ROW = H - 330
     ROW_H = 27
 
-    # Estilos
     cpdf.setFillColor(colors.black)
 
-    # Nombre
     cpdf.setFont("Helvetica-Bold", 11)
     cpdf.drawString(X_NOMBRE, Y_NOMBRE, nombre)
 
-    # Idioma
     cpdf.setFont("Helvetica", 11)
     cpdf.drawString(X_IDIOMA, Y_IDIOMA, idioma)
 
-    # Nivel
     cpdf.setFont("Helvetica", 11)
     cpdf.drawString(X_NIVEL, Y_NIVEL, nivel_cefr)
 
-    # Fecha
     cpdf.setFont("Helvetica", 11)
     cpdf.drawString(X_FECHA, Y_FECHA, fecha_txt)
 
-    # =========================
-    # Actividades (OBT)
-    # =========================
     if detalle:
         cpdf.setFont("Helvetica", 11)
         for i, (_, _, key) in enumerate(ACTIVIDADES):
@@ -859,16 +746,12 @@ def notas_pdf(token):
             y = Y_FIRST_ROW - (i * ROW_H)
             cpdf.drawCentredString(X_OBT, y, str(v))
 
-    # Punteo Final (fila después de actividades)
     y_pf = Y_FIRST_ROW - (len(ACTIVIDADES) * ROW_H)
     cpdf.setFont("Helvetica-Bold", 11)
     cpdf.drawCentredString(X_OBT, y_pf, f"{nota_final:.0f}")
 
-    # Resultado Final (fila siguiente)
     y_res = y_pf - ROW_H
     cpdf.setFont("Helvetica-Bold", 12)
-
-    # ✅ SOLO ESTO CAMBIA: centrado visual en la celda grande de Resultado Final
     X_RESULTADO = X_OBT - 60
     cpdf.drawCentredString(X_RESULTADO, y_res, estado)
 
@@ -876,9 +759,6 @@ def notas_pdf(token):
     cpdf.save()
     overlay_buf.seek(0)
 
-    # =========================
-    # FUSIONAR: plantilla + overlay
-    # =========================
     overlay_reader = PdfReader(overlay_buf)
     overlay_page = overlay_reader.pages[0]
 
@@ -894,10 +774,15 @@ def notas_pdf(token):
     return send_file(
         out_buf,
         as_attachment=False,
-        download_name=f"notas_{nombre.replace(' ','_')}.pdf",
+        download_name=f"notas_{nombre.replace(' ', '_')}.pdf",
         mimetype="application/pdf"
     )
-@app.route("/login", methods=["GET","POST"])
+
+
+# =========================================
+# LOGIN / LOGOUT
+# =========================================
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         u = (request.form.get("username") or "").strip()
@@ -908,10 +793,7 @@ def login():
             return redirect(url_for("login"))
 
         with conn() as c:
-            row = c.execute(
-                "SELECT * FROM usuarios WHERE username=?",
-                (u,)
-            ).fetchone()
+            row = c.execute("SELECT * FROM usuarios WHERE username=?", (u,)).fetchone()
 
         if row and check_password_hash(row["password_hash"], p):
             session["user"] = {
@@ -921,42 +803,40 @@ def login():
             flash("Bienvenido.", "ok")
             return redirect(request.args.get("next") or url_for("admin"))
 
-        # ❌ SOLO entra aquí si el login FALLA
         flash("Usuario o contraseña incorrectos.", "error")
         return redirect(url_for("login"))
 
     return render_template("login.html")
 
 
-
 @app.route("/logout")
 def logout():
-    session.clear()   # <- corregido, antes estaba sin paréntesis
+    session.clear()
     flash("Sesión cerrada.", "ok")
     return redirect(url_for("validar"))
 
 
 # =========================================
-# Admin (CRUD + listado)
+# ADMIN
 # =========================================
 @app.route("/admin", methods=["GET", "POST"])
 @login_required
 @role_required("admin", "subadmin")
 def admin():
-    # -------- Crear nuevo estudiante (POST) --------
     if request.method == "POST":
         nombre = (request.form.get("nombre") or "").strip()
-        etapa  = (request.form.get("etapa")  or "").strip()
-        nivel  = (request.form.get("nivel")  or "").strip()
+        programa = get_programa(request.form.get("programa") or "Inglés")
+        etapa = (request.form.get("etapa") or "").strip()
+        nivel = (request.form.get("nivel") or "").strip()
 
-        etapa = canonical_etapa(etapa)
-        nivel = canonical_nivel(etapa, nivel)
+        etapa = canonical_etapa(programa, etapa)
+        nivel = canonical_nivel(programa, etapa, nivel)
 
         nota_s = (request.form.get("nota") or "").strip()
         notas_url = (request.form.get("notas") or "").strip()
 
         if not (nombre and etapa and nivel and nota_s):
-            flash("Completa nombre, etapa, nivel y nota.", "error")
+            flash("Completa nombre, programa, etapa, nivel y nota.", "error")
             return redirect(url_for("admin"))
 
         try:
@@ -970,43 +850,38 @@ def admin():
             return redirect(url_for("admin"))
 
         estado = "Aprobado" if nota >= PASSING_GRADE else "Reprobado"
-
-        # ✅ SIEMPRE guardamos con separador estándar
         curso_text = f"{etapa} - {nivel}"
-
-        token  = uuid.uuid4().hex
+        token = uuid.uuid4().hex
         creado = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         with conn() as c:
             c.execute("""
-                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas)
-                VALUES(?,?,?,?,?,?,?)
-            """, (token, nombre, curso_text, nota, estado, creado, notas_url))
+                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas,programa)
+                VALUES(?,?,?,?,?,?,?,?)
+            """, (token, nombre, curso_text, nota, estado, creado, notas_url, programa))
 
         build_qr(token)
         flash("Estudiante creado y QR generado.", "ok")
         return redirect(url_for("admin"))
 
-    # -------- Listado, filtros y paginación (GET) --------
     q = (request.args.get("q") or "").strip()
-
+    programa_filtro = get_programa(request.args.get("programa") or "Inglés") if (request.args.get("programa") or "").strip() else ""
     etapa_filtro_raw = (request.args.get("etapa") or "").strip()
     nivel_filtro_raw = (request.args.get("nivel") or "").strip()
-    estado_filtro    = (request.args.get("estado") or "").strip()
+    estado_filtro = (request.args.get("estado") or "").strip()
 
     nota_min_s = (request.args.get("nota_min") or "").strip()
     nota_max_s = (request.args.get("nota_max") or "").strip()
 
-    # ✅ NUEVO: fechas emitidas
-    fecha_desde = (request.args.get("desde") or "").strip()  # YYYY-MM-DD
-    fecha_hasta = (request.args.get("hasta") or "").strip()  # YYYY-MM-DD
+    fecha_desde = (request.args.get("desde") or "").strip()
+    fecha_hasta = (request.args.get("hasta") or "").strip()
 
-    sort     = (request.args.get("sort") or "creado_en").strip()
-    order    = (request.args.get("order") or "desc").lower()
-    page     = int(request.args.get("page", 1) or 1)
+    sort = (request.args.get("sort") or "creado_en").strip()
+    order = (request.args.get("order") or "desc").lower()
+    page = int(request.args.get("page", 1) or 1)
     per_page = int(request.args.get("per_page", 10) or 10)
 
-    allowed_sorts = {"id", "token", "nombre", "curso", "nota", "estado", "creado_en"}
+    allowed_sorts = {"id", "token", "nombre", "curso", "nota", "estado", "creado_en", "programa"}
     if sort not in allowed_sorts:
         sort = "creado_en"
     if order not in {"asc", "desc"}:
@@ -1016,46 +891,43 @@ def admin():
     if page < 1:
         page = 1
 
-    # Canonizar etapa/nivel
-    etapa_filtro = canonical_etapa(etapa_filtro_raw) if etapa_filtro_raw else ""
+    etapa_filtro = canonical_etapa(programa_filtro or "Inglés", etapa_filtro_raw) if etapa_filtro_raw else ""
     nivel_filtro = nivel_filtro_raw.strip()
     if etapa_filtro and nivel_filtro:
-        nivel_filtro = canonical_nivel(etapa_filtro, nivel_filtro)
+        nivel_filtro = canonical_nivel(programa_filtro or "Inglés", etapa_filtro, nivel_filtro)
 
-    niveles_filtro = ETAPAS.get(etapa_filtro, []) if etapa_filtro else []
+    niveles_filtro = get_etapas(programa_filtro).get(etapa_filtro, []) if (programa_filtro and etapa_filtro) else []
 
     where_parts = ["1=1"]
     params = []
 
-    # ✅ EXPRESIONES SQL robustas:
     etapa_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,1,instr(curso,'-')-1) ELSE curso END)"
     nivel_expr = "trim(CASE WHEN instr(curso,'-')>0 THEN substr(curso,instr(curso,'-')+1) ELSE '' END)"
 
-    # ✅ Búsqueda tolerante a acentos
     if q:
         q_norm = f"%{strip_accents_py(q).lower()}%"
         where_parts.append("(lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?)")
         params.extend([q_norm, q_norm, f"%{q}%"])
 
-    # ✅ Filtro etapa (acepta aliases como "Pre Intermedio" y "Pre Intermedia")
+    if programa_filtro:
+        where_parts.append("norm_key(programa) = ?")
+        params.append(_norm_key(programa_filtro))
+
     if etapa_filtro:
-        keys = etapa_keys(etapa_filtro)  # <- devuelve varias variantes normalizadas
-        where_parts.append(f"norm_key({etapa_expr}) IN ({','.join(['?']*len(keys))})")
+        keys = etapa_keys(programa_filtro or "Inglés", etapa_filtro)
+        where_parts.append(f"norm_key({etapa_expr}) IN ({','.join(['?'] * len(keys))})")
         params.extend(keys)
 
-    # ✅ Filtro nivel EXACTO robusto
     if nivel_filtro:
         where_parts.append(f"norm_key({nivel_expr}) = ?")
         params.append(_norm_key(nivel_filtro))
 
-    # ✅ Estado
     if estado_filtro and estado_filtro.lower() != "todos":
         if estado_filtro not in ("Aprobado", "Reprobado"):
             estado_filtro = "Aprobado" if estado_filtro.lower().startswith("apro") else "Reprobado"
         where_parts.append("estado = ?")
         params.append(estado_filtro)
 
-    # ✅ rango de nota
     def _to_float(s):
         try:
             return float(s)
@@ -1072,7 +944,6 @@ def admin():
         where_parts.append("nota <= ?")
         params.append(nmax)
 
-    # ✅ filtro por fechas emitidas
     if fecha_desde:
         where_parts.append("date(creado_en) >= date(?)")
         params.append(fecha_desde)
@@ -1100,6 +971,7 @@ def admin():
         "token": e["token"],
         "nombre": e["nombre"],
         "curso": e["curso"],
+        "programa": e["programa"],
         "nota": e["nota"],
         "estado": e["estado"],
         "creado_en": e["creado_en"],
@@ -1114,6 +986,7 @@ def admin():
         estudiantes=listado,
         q=q,
 
+        programa_filtro=programa_filtro,
         etapa_filtro=etapa_filtro,
         nivel_filtro=nivel_filtro,
         niveles_filtro=niveles_filtro,
@@ -1134,28 +1007,25 @@ def admin():
     )
 
 
-from flask import jsonify
-
 @app.route("/admin/ids", methods=["GET"])
 @login_required
 @role_required("admin", "subadmin")
 def admin_ids():
     q = (request.args.get("q") or "").strip()
-
+    programa_filtro = get_programa(request.args.get("programa") or "Inglés") if (request.args.get("programa") or "").strip() else ""
     etapa_filtro_raw = (request.args.get("etapa") or "").strip()
     nivel_filtro_raw = (request.args.get("nivel") or "").strip()
-    estado_filtro    = (request.args.get("estado") or "").strip()
+    estado_filtro = (request.args.get("estado") or "").strip()
 
     nota_min_s = (request.args.get("nota_min") or "").strip()
     nota_max_s = (request.args.get("nota_max") or "").strip()
+    fecha_desde = (request.args.get("desde") or "").strip()
+    fecha_hasta = (request.args.get("hasta") or "").strip()
 
-    fecha_desde = (request.args.get("desde") or "").strip()  # YYYY-MM-DD
-    fecha_hasta = (request.args.get("hasta") or "").strip()  # YYYY-MM-DD
-
-    etapa_filtro = canonical_etapa(etapa_filtro_raw) if etapa_filtro_raw else ""
+    etapa_filtro = canonical_etapa(programa_filtro or "Inglés", etapa_filtro_raw) if etapa_filtro_raw else ""
     nivel_filtro = nivel_filtro_raw.strip()
     if etapa_filtro and nivel_filtro:
-        nivel_filtro = canonical_nivel(etapa_filtro, nivel_filtro)
+        nivel_filtro = canonical_nivel(programa_filtro or "Inglés", etapa_filtro, nivel_filtro)
 
     where_parts = ["1=1"]
     params = []
@@ -1168,10 +1038,13 @@ def admin_ids():
         where_parts.append("(lower(strip_accents(nombre)) LIKE ? OR lower(strip_accents(curso)) LIKE ? OR token LIKE ?)")
         params.extend([q_norm, q_norm, f"%{q}%"])
 
-    # ✅ Filtro etapa (acepta aliases como "Pre Intermedio" y "Pre Intermedia")
+    if programa_filtro:
+        where_parts.append("norm_key(programa) = ?")
+        params.append(_norm_key(programa_filtro))
+
     if etapa_filtro:
-        keys = etapa_keys(etapa_filtro)
-        where_parts.append(f"norm_key({etapa_expr}) IN ({','.join(['?']*len(keys))})")
+        keys = etapa_keys(programa_filtro or "Inglés", etapa_filtro)
+        where_parts.append(f"norm_key({etapa_expr}) IN ({','.join(['?'] * len(keys))})")
         params.extend(keys)
 
     if nivel_filtro:
@@ -1215,8 +1088,7 @@ def admin_ids():
     return jsonify({"ids": ids, "count": len(ids)})
 
 
-
-@app.route("/admin/editar/<int:id>", methods=["GET","POST"])
+@app.route("/admin/editar/<int:id>", methods=["GET", "POST"])
 @login_required
 @role_required("admin", "subadmin")
 def editar_estudiante(id):
@@ -1227,20 +1099,26 @@ def editar_estudiante(id):
 
     if request.method == "POST":
         nombre = (request.form.get("nombre") or "").strip()
-        etapa  = (request.form.get("etapa")  or "").strip()
-        nivel  = (request.form.get("nivel")  or "").strip()
-        etapa = canonical_etapa(etapa)
-        nivel = canonical_nivel(etapa, nivel)
-        nota_s = (request.form.get("nota")   or "").strip()
-        notas_url = (request.form.get("notas") or "").strip()   # <-- NUEVO
+        programa = get_programa(request.form.get("programa") or "Inglés")
+        etapa = (request.form.get("etapa") or "").strip()
+        nivel = (request.form.get("nivel") or "").strip()
+
+        etapa = canonical_etapa(programa, etapa)
+        nivel = canonical_nivel(programa, etapa, nivel)
+
+        nota_s = (request.form.get("nota") or "").strip()
+        notas_url = (request.form.get("notas") or "").strip()
+
         if not (nombre and etapa and nivel and nota_s):
-            flash("Completa nombre, etapa, nivel y nota.", "error")
+            flash("Completa nombre, programa, etapa, nivel y nota.", "error")
             return redirect(url_for("editar_estudiante", id=id))
+
         try:
             nota = float(nota_s)
-        except:
+        except Exception:
             flash("La nota debe ser numérica.", "error")
             return redirect(url_for("editar_estudiante", id=id))
+
         if nota < 0 or nota > 100:
             flash("La nota debe estar entre 0 y 100.", "error")
             return redirect(url_for("editar_estudiante", id=id))
@@ -1249,19 +1127,28 @@ def editar_estudiante(id):
         curso_text = f"{etapa} - {nivel}"
 
         with conn() as c:
-            c.execute("""UPDATE estudiantes
-                         SET nombre=?, curso=?, nota=?, estado=? 
-                         WHERE id=?""",
-                      (nombre, curso_text, nota, estado, id))
+            c.execute("""
+                UPDATE estudiantes
+                SET nombre=?, curso=?, nota=?, estado=?, programa=?, notas=?
+                WHERE id=?
+            """, (nombre, curso_text, nota, estado, programa, notas_url, id))
+
         flash("Estudiante actualizado.", "ok")
         return redirect(url_for("admin"))
 
-    # separar etapa/nivel para el form
     etapa_val, nivel_val = "", ""
     if " - " in e["curso"]:
         etapa_val, nivel_val = e["curso"].split(" - ", 1)
 
-    return render_template("editar.html", est=e, etapa_val=etapa_val, nivel_val=nivel_val)
+    programa_val = get_programa(e["programa"] or "Inglés")
+
+    return render_template(
+        "editar.html",
+        est=e,
+        etapa_val=etapa_val,
+        nivel_val=nivel_val,
+        programa_val=programa_val
+    )
 
 
 @app.route("/admin/eliminar/<int:id>", methods=["POST"])
@@ -1274,8 +1161,10 @@ def eliminar_estudiante(id):
     if row:
         png = os.path.join(QR_DIR, f"{row['token']}.png")
         if os.path.exists(png):
-            try: os.remove(png)
-            except: pass
+            try:
+                os.remove(png)
+            except Exception:
+                pass
     flash("Estudiante eliminado.", "ok")
     return redirect(url_for("admin"))
 
@@ -1290,27 +1179,39 @@ def regenerar_qr(token):
 
 
 # =========================================
-# Exportar CSV / Excel
+# EXPORTAR CSV / EXCEL
 # =========================================
 @app.route("/admin/export/csv")
 @login_required
 @role_required("admin")
 def export_csv():
     with conn() as c:
-        rows = c.execute("""SELECT id, token, nombre, curso, nota, estado, creado_en
-                            FROM estudiantes ORDER BY id ASC""").fetchall()
+        rows = c.execute("""
+            SELECT id, token, nombre, programa, curso, nota, estado, creado_en
+            FROM estudiantes
+            ORDER BY id ASC
+        """).fetchall()
+
     sep = request.args.get("sep", ";")
     si = StringIO()
     w = csv.writer(si, delimiter=sep, lineterminator="\n")
-    w.writerow(["id", "token", "nombre", "curso", "nota", "estado", "creado_en"])
+    w.writerow(["id", "token", "nombre", "programa", "curso", "nota", "estado", "creado_en"])
+
     for r in rows:
-        w.writerow([r["id"], r["token"], r["nombre"], r["curso"],
-                    f"{r['nota']:.2f}", r["estado"], r["creado_en"]])
+        w.writerow([
+            r["id"], r["token"], r["nombre"], r["programa"], r["curso"],
+            f"{r['nota']:.2f}", r["estado"], r["creado_en"]
+        ])
+
     data = ("\ufeff" + si.getvalue()).encode("utf-8")
-    buf = BytesIO(data); buf.seek(0)
-    return send_file(buf, as_attachment=True,
-                     download_name="estudiantes.csv",
-                     mimetype="text/csv; charset=utf-8")
+    buf = BytesIO(data)
+    buf.seek(0)
+    return send_file(
+        buf,
+        as_attachment=True,
+        download_name="estudiantes.csv",
+        mimetype="text/csv; charset=utf-8"
+    )
 
 
 @app.route("/admin/export/xlsx")
@@ -1318,14 +1219,17 @@ def export_csv():
 @role_required("admin")
 def export_xlsx():
     with conn() as c:
-        rows = c.execute("""SELECT id, token, nombre, curso, nota, estado, creado_en
-                            FROM estudiantes ORDER BY id ASC""").fetchall()
+        rows = c.execute("""
+            SELECT id, token, nombre, programa, curso, nota, estado, creado_en
+            FROM estudiantes
+            ORDER BY id ASC
+        """).fetchall()
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Estudiantes"
 
-    headers = ["id","token","nombre","curso","nota","estado","creado_en"]
+    headers = ["id", "token", "nombre", "programa", "curso", "nota", "estado", "creado_en"]
     ws.append(headers)
 
     for r in rows:
@@ -1334,8 +1238,11 @@ def export_xlsx():
             dt = datetime.strptime(dt, "%Y-%m-%d %H:%M:%S")
         except Exception:
             pass
-        ws.append([r["id"], r["token"], r["nombre"], r["curso"],
-                   float(r["nota"]), r["estado"], dt])
+
+        ws.append([
+            r["id"], r["token"], r["nombre"], r["programa"], r["curso"],
+            float(r["nota"]), r["estado"], dt
+        ])
 
     header_fill = PatternFill("solid", fgColor="DCE6F1")
     header_font = Font(bold=True)
@@ -1343,40 +1250,55 @@ def export_xlsx():
     thin = Side(style="thin", color="CCCCCC")
     border_all = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    max_row = ws.max_row; max_col = ws.max_column
+    max_row = ws.max_row
+    max_col = ws.max_column
 
-    for col in range(1, max_col+1):
+    for col in range(1, max_col + 1):
         cell = ws.cell(row=1, column=col)
-        cell.fill = header_fill; cell.font = header_font
-        cell.alignment = header_align; cell.border = border_all
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+        cell.border = border_all
 
-    widths = [6, 38, 22, 22, 8, 14, 22]
+    widths = [6, 38, 24, 14, 22, 8, 14, 22]
     for i, wdt in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = wdt
 
-    for row in range(2, max_row+1):
-        ws.cell(row=row, column=5).number_format = "0.00"
-        ws.cell(row=row, column=7).number_format = "yyyy-mm-dd hh:mm:ss"
-        for col in range(1, max_col+1):
+    for row in range(2, max_row + 1):
+        ws.cell(row=row, column=6).number_format = "0.00"
+        ws.cell(row=row, column=8).number_format = "yyyy-mm-dd hh:mm:ss"
+        for col in range(1, max_col + 1):
             c = ws.cell(row=row, column=col)
             c.border = border_all
             c.alignment = Alignment(vertical="center")
 
     ref = f"A1:{get_column_letter(max_col)}{max_row}"
     table = Table(displayName="EstudiantesTable", ref=ref)
-    style = TableStyleInfo(name="TableStyleMedium9", showFirstColumn=False,
-                           showLastColumn=False, showRowStripes=True, showColumnStripes=False)
+    style = TableStyleInfo(
+        name="TableStyleMedium9",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False
+    )
     table.tableStyleInfo = style
     ws.add_table(table)
     ws.freeze_panes = "A2"
 
-    out = BytesIO(); wb.save(out); out.seek(0)
-    return send_file(out, as_attachment=True,
-                     download_name="estudiantes.xlsx",
-                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    out = BytesIO()
+    wb.save(out)
+    out.seek(0)
+
+    return send_file(
+        out,
+        as_attachment=True,
+        download_name="estudiantes.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
 
 # =========================================
-# Importar estudiantes desde Excel (XLSX)
+# IMPORTAR DESDE EXCEL
 # =========================================
 @app.route("/admin/import/xlsx", methods=["POST"])
 @login_required
@@ -1384,9 +1306,8 @@ def export_xlsx():
 def import_xlsx():
     """
     Importa estudiantes desde .xlsx:
-    - Soporta plantilla vieja: nombre completo/nombre, etapa, nivel, nota, notas
-    - Soporta plantilla nueva (boletín): idioma, nivel cefr, actividades, punteo final, resultado final, notas
-    Guarda detalle en estudiantes.detalle_notas (JSON).
+    - Soporta plantilla vieja: programa, nombre, etapa, nivel, nota, notas
+    - Soporta plantilla nueva: programa, idioma, nivel cefr, actividades, punteo final, resultado final, notas
     """
     f = request.files.get("archivo")
     if not f or not f.filename:
@@ -1404,7 +1325,6 @@ def import_xlsx():
         flash("No se pudo leer el Excel. Verifica el formato.", "error")
         return redirect(url_for("admin"))
 
-    # Mapear encabezados (normalizados y tolerantes a acentos)
     header_map = {}
     for i in range(1, ws.max_column + 1):
         v = ws.cell(row=1, column=i).value
@@ -1414,14 +1334,13 @@ def import_xlsx():
     def col(name: str):
         return header_map.get(strip_accents_py(name).strip().lower())
 
-    # Columnas base
+    programa_col = col("programa")
     name_cols = [col("nombre completo"), col("nombre")]
     etapa_col = col("etapa")
     nivel_col = col("nivel")
-    nota_col  = col("nota")   # plantilla vieja
+    nota_col = col("nota")
     notas_col = col("notas")
 
-    # Columnas boletín
     idioma_col = col("idioma")
     nivel_cefr_col = col("nivel cefr")
 
@@ -1435,19 +1354,18 @@ def import_xlsx():
         "comprension_auditiva": col("comprension auditiva"),
         "examen_general": col("examen general"),
     }
+
     punteo_final_col = col("punteo final")
     resultado_final_col = col("resultado final")
 
-    # Validación mínima
     if not any(name_cols) or not etapa_col or not nivel_col:
-        flash("Encabezados inválidos. Requeridos: Nombre completo (o Nombre), Etapa, Nivel.", "error")
+        flash("Encabezados inválidos. Requeridos: Nombre completo (o Nombre), Etapa y Nivel.", "error")
         return redirect(url_for("admin"))
 
     ok, skipped = 0, 0
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for r in range(2, ws.max_row + 1):
-        # nombre
         nombre = ""
         for nc in name_cols:
             if nc:
@@ -1455,41 +1373,48 @@ def import_xlsx():
                 if nombre:
                     break
 
+        programa = "Inglés"
+        if programa_col:
+            programa = get_programa(str(ws.cell(row=r, column=programa_col).value or "Inglés").strip())
+
         etapa = str(ws.cell(row=r, column=etapa_col).value or "").strip() if etapa_col else ""
         nivel = str(ws.cell(row=r, column=nivel_col).value or "").strip() if nivel_col else ""
+
+        etapa = canonical_etapa(programa, etapa)
+        nivel = canonical_nivel(programa, etapa, nivel)
 
         if not nombre or not etapa or not nivel:
             skipped += 1
             continue
 
-        # nota: si viene boletín, la calculamos desde punteo final/actividades; si no, usamos columna "nota"
         detalle = {}
 
-        # idioma / nivel_cefr si existen
         if idioma_col:
             detalle["idioma"] = str(ws.cell(row=r, column=idioma_col).value or "").strip()
         if nivel_cefr_col:
             detalle["nivel_cefr"] = str(ws.cell(row=r, column=nivel_cefr_col).value or "").strip()
 
-        # actividades si existen
         any_act = False
         total_act = 0.0
+
         for _, _, key in ACTIVIDADES:
             cidx = cols_act.get(key)
             if not cidx:
                 continue
+
             v = ws.cell(row=r, column=cidx).value
             if v is None or str(v).strip() == "":
                 continue
+
             any_act = True
             try:
                 fv = float(v)
             except Exception:
                 fv = 0.0
+
             detalle[key] = fv
             total_act += fv
 
-        # punteo final si existe
         nota = None
         if punteo_final_col:
             vpf = ws.cell(row=r, column=punteo_final_col).value
@@ -1500,12 +1425,10 @@ def import_xlsx():
                 except Exception:
                     pass
 
-        # si no hay punteo final pero sí actividades, usar suma
         if nota is None and any_act:
             nota = total_act
             detalle["punteo_final"] = nota
 
-        # si no hay boletín, intentar "nota" vieja
         if nota is None:
             if not nota_col:
                 skipped += 1
@@ -1517,10 +1440,8 @@ def import_xlsx():
                 skipped += 1
                 continue
 
-        # estado/resultado
         estado = "Aprobado" if nota >= PASSING_GRADE else "Reprobado"
 
-        # si viene resultado final en el excel, guardarlo en detalle (no cambia tu estado DB)
         if resultado_final_col:
             rf = ws.cell(row=r, column=resultado_final_col).value
             if rf is not None and str(rf).strip() != "":
@@ -1528,24 +1449,28 @@ def import_xlsx():
 
         curso_text = f"{etapa} - {nivel}"
 
-        # notas url
         notas_url = ""
         if notas_col:
             dv = ws.cell(row=r, column=notas_col).value
-            notas_url = (str(dv).strip() if dv is not None else "")
+            notas_url = str(dv).strip() if dv is not None else ""
 
         token = uuid.uuid4().hex
         with conn() as c:
             c.execute("""
-                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas,detalle_notas)
-                VALUES(?,?,?,?,?,?,?,?)
-            """, (token, nombre, curso_text, float(nota), estado, now, notas_url,
-                  json.dumps(detalle, ensure_ascii=False) if detalle else None))
+                INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas,detalle_notas,programa)
+                VALUES(?,?,?,?,?,?,?,?,?)
+            """, (
+                token, nombre, curso_text, float(nota), estado, now, notas_url,
+                json.dumps(detalle, ensure_ascii=False) if detalle else None,
+                programa
+            ))
+
         build_qr(token)
         ok += 1
 
     flash(f"Importación finalizada. Éxitos: {ok}, Omitidos: {skipped}.", "ok")
     return redirect(url_for("admin"))
+
 
 @app.route("/admin/template/xlsx")
 @login_required
@@ -1556,6 +1481,7 @@ def download_import_template():
     ws.title = "ImportarEstudiantes"
 
     headers = [
+        "programa",
         "nombre completo", "etapa", "nivel",
         "idioma", "nivel cefr",
         "examen 1", "examen 2", "lectura", "escritura", "vocabulario",
@@ -1566,6 +1492,7 @@ def download_import_template():
     ws.append(headers)
 
     ws.append([
+        "Inglés",
         "Juan Pérez", "Intermedia", "B1 PLUS",
         "Inglés Americano", "B1 CEFR",
         8, 9, 10, 10, 10,
@@ -1575,8 +1502,9 @@ def download_import_template():
     ])
 
     ws.append([
-        "María López", "Principiante", "PRE A1",
-        "Inglés Americano", "A1 CEFR",
+        "Francés",
+        "Marie Dupont", "Principiante", "A1",
+        "Francés", "A1 CEFR",
         6, 7, 8, 8, 7,
         6, 6, 18,
         66, "APROBADO",
@@ -1599,12 +1527,14 @@ def download_import_template():
     out = BytesIO()
     wb.save(out)
     out.seek(0)
+
     return send_file(
         out,
         as_attachment=True,
         download_name="plantilla_importar_estudiantes.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
 
 @app.route("/admin/update-date/<int:id>", methods=["POST"])
 @login_required
@@ -1625,17 +1555,8 @@ def update_fecha(id):
 
 
 # =========================================
-# ZIP: Descargar certificados seleccionados
+# ZIP CERTIFICADOS
 # =========================================
-# ===========================
-# ZIP: Descargar certificados seleccionados (ROBUSTO)
-# - Evita 504: limita cantidad, crea ZIP en DISCO y lo envía como archivo
-# ===========================
-import tempfile
-from flask import after_this_request
-
-MAX_ZIP_ITEMS = int(os.getenv("MAX_ZIP_ITEMS", "200"))  # ajusta: 200 recomendado
-
 @app.route("/admin/certificados/zip", methods=["POST"])
 @login_required
 @role_required("admin", "subadmin")
@@ -1647,7 +1568,6 @@ def bulk_download_certs():
         flash("Selecciona al menos un alumno.", "error")
         return redirect(url_for("admin"))
 
-    # ✅ Evitar timeouts por listas enormes
     if len(ids) > MAX_ZIP_ITEMS:
         flash(
             f"Demasiados alumnos seleccionados. Máximo {MAX_ZIP_ITEMS} por ZIP para evitar timeout.",
@@ -1667,10 +1587,8 @@ def bulk_download_certs():
         flash("No se encontraron alumnos con esos IDs.", "error")
         return redirect(url_for("admin"))
 
-    # ✅ Orden estable (por id)
     rows = sorted(rows, key=lambda r: int(r["id"]))
 
-    # ✅ Crear ZIP en DISCO (no BytesIO) => menos RAM y más estable en VPS
     tmp_dir = tempfile.gettempdir()
     zip_name = f"certificados_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.zip"
     zip_path = os.path.join(tmp_dir, zip_name)
@@ -1687,16 +1605,13 @@ def bulk_download_certs():
                     zf.writestr(fname, pdf_bytes)
                     ok_count += 1
                 except Exception as ex:
-                    # ✅ si un PDF falla, no tumbamos todo el ZIP
                     fail_count += 1
-                    # opcional: agrega un txt con el error
                     err_name = f"ERROR_{r['id']}_{_safe_filename(r['nombre'])}.txt"
                     zf.writestr(
                         err_name,
                         f"No se pudo generar PDF para ID {r['id']} token {r['token']}.\nError: {repr(ex)}\n"
                     )
 
-        # ✅ Si no se generó ninguno, borra el zip y vuelve
         if ok_count == 0:
             try:
                 if os.path.exists(zip_path):
@@ -1706,7 +1621,6 @@ def bulk_download_certs():
             flash("No se pudo generar ningún PDF. Revisa logs.", "error")
             return redirect(url_for("admin"))
 
-        # ✅ Limpieza del archivo temporal al terminar de enviarlo
         @after_this_request
         def _cleanup(response):
             try:
@@ -1722,7 +1636,6 @@ def bulk_download_certs():
                 "error"
             )
 
-        # ✅ Para archivos grandes: as_attachment=True y conditional=True
         return send_file(
             zip_path,
             as_attachment=True,
@@ -1732,7 +1645,6 @@ def bulk_download_certs():
         )
 
     except Exception as e:
-        # si algo revienta, intenta borrar zip parcial
         try:
             if os.path.exists(zip_path):
                 os.remove(zip_path)
@@ -1742,6 +1654,9 @@ def bulk_download_certs():
         return redirect(url_for("admin"))
 
 
+# =========================================
+# GENERADOR PDF
+# =========================================
 def _build_pdf_bytes_from_token(token: str) -> bytes:
     _ensure_paths()
 
@@ -1750,24 +1665,30 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
     if not e:
         raise ValueError(f"Token no existe: {token}")
 
+    programa = get_programa(e["programa"] or "Inglés")
+
     qr_png = os.path.join(QR_DIR, f"{token}.png")
     if not os.path.exists(qr_png):
         build_qr(token)
 
-    # ⚠️ Registrar fuentes UNA VEZ suele ser mejor, pero lo dejamos aquí por compatibilidad
     _register_cert_fonts()
     TITLE_FONT = _pick_font("Playfair-Bold", fallback_bold=True)
-    NAME_FONT  = _pick_font("GreatVibes", fallback_bold=False)
-    TEXT_FONT  = _pick_font("Arial", fallback_bold=False)
+    NAME_FONT = _pick_font("GreatVibes", fallback_bold=False)
+    TEXT_FONT = _pick_font("Arial", fallback_bold=False)
 
     buf = BytesIO()
     cpdf = canvas.Canvas(buf, pagesize=landscape(A4))
     W, H = landscape(A4)
 
-    # Fondo
+    template_png = TEMPLATE_PNG
+    if programa == "Francés" and os.path.exists(TEMPLATE_PNG_FRANCES):
+        template_png = TEMPLATE_PNG_FRANCES
+    elif programa == "Inglés" and os.path.exists(TEMPLATE_PNG_INGLES):
+        template_png = TEMPLATE_PNG_INGLES
+
     try:
-        if os.path.exists(TEMPLATE_PNG):
-            bg = ImageReader(TEMPLATE_PNG)
+        if os.path.exists(template_png):
+            bg = ImageReader(template_png)
             cpdf.drawImage(
                 bg, 0, 0, width=W, height=H, mask="auto",
                 preserveAspectRatio=True, anchor="c"
@@ -1779,40 +1700,37 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
         cpdf.setFillColor(colors.whitesmoke)
         cpdf.rect(0, 0, W, H, stroke=0, fill=1)
 
-    AEA_NAVY = colors.Color(0/255, 47/255, 122/255)
+    AEA_NAVY = colors.Color(0 / 255, 47 / 255, 122 / 255)
 
-    # Nivel/curso
+    
     nivel_txt = (e["curso"] or "").strip()
-    cpdf.setFillColor(AEA_NAVY)
-    cpdf.setFont(TITLE_FONT, 20)
-    cpdf.drawCentredString(W/2, H - 220, nivel_txt)
 
-    # Marca de agua (opcional)
-    wm_path = os.path.join(CERT_STATIC, "logo_marca_agua.png")
-    if os.path.exists(wm_path):
+    cpdf.setFont(TITLE_FONT, 20)
+    cpdf.drawCentredString(W / 2, H - 220, nivel_txt)
+
+    if os.path.exists(LOGO_WATERMARK):
         try:
-            wm = ImageReader(wm_path)
+            wm = ImageReader(LOGO_WATERMARK)
             cpdf.saveState()
             if hasattr(cpdf, "setFillAlpha"):
                 cpdf.setFillAlpha(0.08)
             cpdf.drawImage(
-                wm, W/2 - 210, H/2 - 210, width=420, height=420,
+                wm, W / 2 - 210, H / 2 - 210,
+                width=420, height=420,
                 mask="auto", preserveAspectRatio=True
             )
             cpdf.restoreState()
         except Exception:
             pass
 
-    # Nombre
     name_txt = (e["nombre"] or "").strip()
     cpdf.setFillColor(AEA_NAVY)
     cpdf.setFont(NAME_FONT, 35)
-    cpdf.drawCentredString(W/2, H/2 + 10, name_txt)
+    cpdf.drawCentredString(W / 2, H / 2 + 10, name_txt)
 
-    # QR
-    QR_SIZE   = 90
+    QR_SIZE = 90
     RIGHT_MRG = 90
-    TOP_MRG   = 120
+    TOP_MRG = 120
     QR_X = W - RIGHT_MRG - QR_SIZE
     QR_Y = H - TOP_MRG - QR_SIZE
 
@@ -1824,20 +1742,19 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
         )
         cpdf.setFont(TEXT_FONT, 9)
         cpdf.setFillColor(AEA_NAVY)
-        cpdf.drawCentredString(QR_X + QR_SIZE/2, QR_Y - 12, "Escanea para validar")
+        cpdf.drawCentredString(QR_X + QR_SIZE / 2, QR_Y - 12, "Escanea para validar")
     except Exception:
         pass
 
-    # Fecha
     try:
         creado = datetime.fromisoformat(e["creado_en"])
-        fecha_txt = f"{creado.day} de {MESES_ES[creado.month-1].capitalize()} de {creado.year}"
+        fecha_txt = _fecha_es(creado)
     except Exception:
         fecha_txt = (e["creado_en"] or "")
 
     cpdf.setFillColor(AEA_NAVY)
     cpdf.setFont(TITLE_FONT, 16)
-    cpdf.drawCentredString(W/2, 60, fecha_txt)
+    cpdf.drawCentredString(W / 2, 60, fecha_txt)
 
     cpdf.showPage()
     cpdf.save()
@@ -1846,7 +1763,7 @@ def _build_pdf_bytes_from_token(token: str) -> bytes:
 
 
 # =========================================
-# Main
+# MAIN
 # =========================================
 if __name__ == "__main__":
     with app.app_context():

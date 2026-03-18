@@ -4,29 +4,38 @@
 
 <section class="hero-validate">
   <h1>Validar certificado</h1>
-  <p class="muted">Ingresa el nombre del estudiante, la etapa y el nivel.</p>
+  <p class="muted">Ingresa el nombre del estudiante, idioma, etapa y nivel.</p>
 </section>
 
-<!-- Guardamos valores preseleccionados en data-* -->
+<!-- Guardamos valores -->
 <div id="validar-data"
+     data-pre-programa="{{ q_programa or '' }}"
      data-pre-etapa="{{ q_etapa or '' }}"
      data-pre-nivel="{{ q_nivel or '' }}">
 </div>
 
 <form method="post" class="card form" style="padding:16px;">
   <div class="grid two">
+
     <label class="field">
       <span>Nombre del estudiante</span>
       <input name="nombre" value="{{ q_nombre or '' }}" placeholder="Ej. Ana Pérez" required />
+    </label>
+
+    <!-- ✅ NUEVO: PROGRAMA -->
+    <label class="field">
+      <span>Idioma</span>
+      <select name="programa" id="programa_val" required>
+        <option value="">Selecciona idioma</option>
+        <option value="Inglés">Inglés</option>
+        <option value="Francés">Francés</option>
+      </select>
     </label>
 
     <label class="field">
       <span>Etapa</span>
       <select name="etapa" id="etapa_val" required>
         <option value="">Selecciona etapa</option>
-        {% for e in ETAPAS.keys() %}
-          <option value="{{ e }}">{{ e }}</option>
-        {% endfor %}
       </select>
     </label>
 
@@ -36,7 +45,9 @@
         <option value="">Selecciona nivel</option>
       </select>
     </label>
+
   </div>
+
   <button class="btn btn-primary" style="margin-top:8px;">Buscar</button>
 </form>
 
@@ -49,6 +60,7 @@
         <tr>
           <th>#</th>
           <th>Nombre</th>
+          <th>Programa</th>
           <th>Etapa / Nivel</th>
           <th>Acciones</th>
         </tr>
@@ -58,6 +70,7 @@
         <tr>
           <td data-th="#">{{ r.id }}</td>
           <td data-th="Nombre">{{ r.nombre }}</td>
+          <td data-th="Programa">{{ r.programa or 'Inglés' }}</td>
           <td data-th="Etapa / Nivel">{{ r.curso }}</td>
           <td data-th="Acciones">
             <a class="btn btn-primary" href="{{ url_for('ver_cert', token=r.token) }}">Ver certificado</a>
@@ -71,33 +84,65 @@
 </div>
 {% endif %}
 
-<!-- Datos de mapa en JSON seguro -->
-<script id="mapa-data" type="application/json">{{ ETAPAS|tojson }}</script>
+<!-- MAPA PROGRAMAS -->
+<script id="mapa-programas" type="application/json">{{ PROGRAMAS|tojson }}</script>
+
 <script>
-  const MAPA = JSON.parse(document.getElementById('mapa-data').textContent);
+  const PROGRAMAS_MAP = JSON.parse(document.getElementById('mapa-programas').textContent);
 
-  // Leemos valores preseleccionados desde data-attributes
-  const dataNode   = document.getElementById('validar-data');
-  const PRE_ETAPA  = dataNode.dataset.preEtapa || '';
-  const PRE_NIVEL  = dataNode.dataset.preNivel || '';
+  const dataNode = document.getElementById('validar-data');
+  const PRE_PROGRAMA = dataNode.dataset.prePrograma || '';
+  const PRE_ETAPA = dataNode.dataset.preEtapa || '';
+  const PRE_NIVEL = dataNode.dataset.preNivel || '';
 
-  function fillNiveles(idEtapa, idNivel, seleccionado){
-    const etapa = document.getElementById(idEtapa).value;
-    const sel   = document.getElementById(idNivel);
-    sel.innerHTML = '<option value="">Selecciona nivel</option>';
-    (MAPA[etapa] || []).forEach(n => {
+  function getEtapas(programa){
+    return PROGRAMAS_MAP[programa] || {};
+  }
+
+  function fillEtapas(programa, selectEl, selected=""){
+    const etapas = getEtapas(programa);
+    selectEl.innerHTML = '<option value="">Selecciona etapa</option>';
+    Object.keys(etapas).forEach(e=>{
       const o = document.createElement('option');
-      o.value = o.textContent = n;
-      if (seleccionado && seleccionado === n) o.selected = true;
-      sel.appendChild(o);
+      o.value = e;
+      o.textContent = e;
+      if (selected && selected === e) o.selected = true;
+      selectEl.appendChild(o);
     });
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
+  function fillNiveles(programa, etapa, selectEl, selected=""){
+    const niveles = (getEtapas(programa)[etapa] || []);
+    selectEl.innerHTML = '<option value="">Selecciona nivel</option>';
+    niveles.forEach(n=>{
+      const o = document.createElement('option');
+      o.value = n;
+      o.textContent = n;
+      if (selected && selected === n) o.selected = true;
+      selectEl.appendChild(o);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const programaSel = document.getElementById('programa_val');
     const etapaSel = document.getElementById('etapa_val');
-    if (PRE_ETAPA) etapaSel.value = PRE_ETAPA;
-    fillNiveles('etapa_val', 'nivel_val', PRE_NIVEL);
-    etapaSel.addEventListener('change', () => fillNiveles('etapa_val','nivel_val',''));
+    const nivelSel = document.getElementById('nivel_val');
+
+    if (PRE_PROGRAMA) programaSel.value = PRE_PROGRAMA;
+
+    if (programaSel.value){
+      fillEtapas(programaSel.value, etapaSel, PRE_ETAPA);
+      fillNiveles(programaSel.value, PRE_ETAPA, nivelSel, PRE_NIVEL);
+    }
+
+    programaSel.addEventListener('change', ()=>{
+      fillEtapas(programaSel.value, etapaSel);
+      fillNiveles(programaSel.value, "", nivelSel);
+    });
+
+    etapaSel.addEventListener('change', ()=>{
+      fillNiveles(programaSel.value, etapaSel.value, nivelSel);
+    });
   });
 </script>
 

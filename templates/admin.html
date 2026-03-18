@@ -2,7 +2,6 @@
 {% extends "base.html" %}
 {% block title %}Administración{% endblock %}
 
-{# SOLO ADMIN: activa estilos full width en base.html #}
 {% block body_class %}page-admin{% endblock %}
 
 {% block content %}
@@ -10,11 +9,6 @@
 <h2 style="margin:10px 0 14px 0;">Administración</h2>
 
 <style>
-/* ==========================================================
-  SOLO ADMIN: ocupar TODO el ancho (sin huecos)
-  - tu base usa .container (con max-width)
-  - aquí lo anulamos SOLO si body tiene .page-admin
-========================================================== */
 .page-admin .container{
   width: 100% !important;
   max-width: 100% !important;
@@ -23,27 +17,22 @@
 }
 .page-admin main{ width: 100% !important; }
 
-/* ==========================================================
-  TABLA ADMIN (PC)
-========================================================== */
 .table-wrap{
   width:100%;
-  overflow-x: hidden;     /* PC: no queremos scroll ni huecos */
+  overflow-x: hidden;
   border-radius:14px;
 }
 
-/* tabla a TODO lo ancho */
 table.compact-table{
   width:100% !important;
   max-width:100% !important;
-  min-width:0 !important;        /* quita el min-width que te causaba huecos/scroll */
-  table-layout: auto !important; /* clave: que se distribuya natural y llene */
+  min-width:0 !important;
+  table-layout: auto !important;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 15px;
 }
 
-/* headers */
 table.compact-table thead th{
   padding: 14px 12px !important;
   font-size: 14px;
@@ -51,19 +40,16 @@ table.compact-table thead th{
   white-space: nowrap;
 }
 
-/* celdas */
 table.compact-table tbody td{
   padding: 16px 12px !important;
   vertical-align: middle;
 }
 
-/* columna # */
 th.col-num, td.col-num{
   width: 56px !important;
   text-align: center !important;
 }
 
-/* columna checkbox SUPER angosta */
 th.th-check, td.td-check{
   width: 36px !important;
   min-width: 36px !important;
@@ -80,17 +66,20 @@ input.row-check, #check_all{
   accent-color:#0b3bdb;
 }
 
-/* nombre: que use espacio sin recortar feo */
 th.col-nombre, td.col-nombre{
-  width: 32% !important; /* se estira bonito */
+  width: 22% !important;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* ==========================================================
-  Etapa / Nivel: SIN badge azul, UNA sola línea: "Etapa / Nivel"
-========================================================== */
+th.col-programa, td.col-programa{
+  width: 120px !important;
+  white-space: nowrap;
+  text-align:center;
+  font-weight: 800;
+}
+
 th.col-curso, td.col-curso{
   width: 18% !important;
   white-space: nowrap !important;
@@ -104,14 +93,12 @@ th.col-curso, td.col-curso{
   margin: 0 6px;
 }
 
-/* nota */
 th.col-nota, td.col-nota{
   width: 90px !important;
   text-align:center !important;
   white-space: nowrap;
 }
 
-/* estado */
 th.col-estado, td.col-estado{
   width: 140px !important;
   white-space: nowrap;
@@ -121,7 +108,6 @@ th.col-estado, td.col-estado{
 .ok{ color:#16a34a; font-weight:900; }
 .bad{ color:#ef4444; font-weight:900; }
 
-/* Creado (fecha): pequeño, bonito, alineado */
 th.col-creado, td.col-creado{
   width: 220px !important;
   white-space: nowrap;
@@ -156,14 +142,12 @@ th.col-creado, td.col-creado{
   font-size: 13px !important;
 }
 
-/* certificado */
 th.col-cert, td.col-cert{
   width: 120px !important;
   text-align:center;
   white-space: nowrap;
 }
 
-/* acciones */
 th.col-acc, td.col-acc{
   width: 160px !important;
   white-space: nowrap;
@@ -176,7 +160,6 @@ th.col-acc, td.col-acc{
   flex-wrap: nowrap;
 }
 
-/* por si un CSS global mete word-break raro */
 table.compact-table td, table.compact-table th{
   word-break: normal !important;
 }
@@ -191,12 +174,17 @@ table.compact-table td, table.compact-table th{
     </label>
 
     <label class="field">
+      <span>Programa</span>
+      <select name="programa" id="programa_new" required>
+        <option value="Inglés">Inglés</option>
+        <option value="Francés">Francés</option>
+      </select>
+    </label>
+
+    <label class="field">
       <span>Etapa</span>
       <select name="etapa" id="etapa_new" required>
         <option value="">Selecciona etapa</option>
-        {% for e in ETAPAS.keys() %}
-          <option value="{{ e }}">{{ e }}</option>
-        {% endfor %}
       </select>
     </label>
 
@@ -238,7 +226,7 @@ table.compact-table td, table.compact-table th{
         <input type="file" name="archivo" accept=".xlsx" required>
       </label>
       <small class="help">
-        El archivo debe tener columnas: <code>nombre</code>, <code>etapa</code>, <code>nivel</code>, <code>nota</code>, <code>notas</code> (link de Drive).
+        El archivo debe tener columnas: <code>programa</code>, <code>nombre</code>, <code>etapa</code>, <code>nivel</code>, <code>nota</code>, <code>notas</code>.
       </small>
     </div>
     <div style="align-self:end;">
@@ -260,12 +248,20 @@ table.compact-table td, table.compact-table th{
 
     <div>
       <label class="field">
+        <span>Programa</span>
+        <select class="input" name="programa" id="programa_filter">
+          <option value="">Todos</option>
+          <option value="Inglés" {{ 'selected' if programa_filtro=='Inglés' else '' }}>Inglés</option>
+          <option value="Francés" {{ 'selected' if programa_filtro=='Francés' else '' }}>Francés</option>
+        </select>
+      </label>
+    </div>
+
+    <div>
+      <label class="field">
         <span>Etapa</span>
         <select class="input" name="etapa" id="etapa_filter">
           <option value="">Todas las etapas</option>
-          {% for e in ETAPAS.keys() %}
-            <option value="{{ e }}" {{ 'selected' if etapa_filtro==e else '' }}>{{ e }}</option>
-          {% endfor %}
         </select>
       </label>
     </div>
@@ -275,11 +271,6 @@ table.compact-table td, table.compact-table th{
         <span>Nivel</span>
         <select class="input" name="nivel" id="nivel_filter">
           <option value="">Todos los niveles</option>
-          {% if niveles_filtro %}
-            {% for n in niveles_filtro %}
-              <option value="{{ n }}" {{ 'selected' if nivel_filtro==n else '' }}>{{ n }}</option>
-            {% endfor %}
-          {% endif %}
         </select>
       </label>
     </div>
@@ -306,7 +297,6 @@ table.compact-table td, table.compact-table th{
         <input class="input" type="number" step="0.01" min="0" max="100" name="nota_max" value="{{ nota_max or '' }}" placeholder="100" />
       </label>
 
-      <!-- ✅ NUEVO: Filtro por fechas emitidas (creado_en) -->
       <label class="field" style="min-width:160px;">
         <span>Desde</span>
         <input class="input" type="date" name="desde" value="{{ request.args.get('desde','') }}">
@@ -332,14 +322,14 @@ table.compact-table td, table.compact-table th{
 
       <div class="adv-actions" style="margin-left:auto;">
         <button class="btn btn-primary">Aplicar filtros</button>
-        {% if q or etapa_filtro or nivel_filtro or estado_filtro or nota_min or nota_max or request.args.get('desde') or request.args.get('hasta') %}
+        {% if q or programa_filtro or etapa_filtro or nivel_filtro or estado_filtro or nota_min or nota_max or request.args.get('desde') or request.args.get('hasta') %}
           <a class="btn" href="{{ url_for('admin', sort=sort, order=order, per_page=per_page, page=1) }}">Limpiar</a>
         {% endif %}
       </div>
     </div>
   </div>
 
-  <div class="mini-help">Filtra por etapa/nivel/estado, fechas emitidas y rango de nota.</div>
+  <div class="mini-help">Filtra por programa, etapa, nivel, estado, fechas emitidas y rango de nota.</div>
 </form>
 
 <!-- ================== SELECCIÓN + ZIP ================== -->
@@ -348,10 +338,7 @@ table.compact-table td, table.compact-table th{
     <span class="pill"><span id="selectedCount">0</span> seleccionados</span>
 
     <button class="btn btn-primary" id="bulkDownloadBtn" disabled>Descargar certificados (ZIP)</button>
-
-    <!-- ✅ Seleccionar SOLO 200 del filtro -->
     <button class="btn" id="selectAllFilteredBtn" type="button">Seleccionar TODO (filtro)</button>
-
     <button class="btn" id="clearSelectionBtn" type="button">Limpiar selección</button>
   </div>
 </div>
@@ -369,7 +356,7 @@ table.compact-table td, table.compact-table th{
 
         <th class="col-nombre">
           <a href="{{ url_for('admin',
-            q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+            q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
             nota_min=nota_min, nota_max=nota_max,
             desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
             sort='nombre', order=inv if sort=='nombre' else 'asc', per_page=per_page, page=1
@@ -378,9 +365,20 @@ table.compact-table td, table.compact-table th{
           </a>
         </th>
 
+        <th class="col-programa">
+          <a href="{{ url_for('admin',
+            q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+            nota_min=nota_min, nota_max=nota_max,
+            desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
+            sort='programa', order=inv if sort=='programa' else 'asc', per_page=per_page, page=1
+          ) }}">
+            Programa {% if sort=='programa' %}{{ '▲' if order=='asc' else '▼' }}{% endif %}
+          </a>
+        </th>
+
         <th class="col-curso">
           <a href="{{ url_for('admin',
-            q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+            q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
             nota_min=nota_min, nota_max=nota_max,
             desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
             sort='curso', order=inv if sort=='curso' else 'asc', per_page=per_page, page=1
@@ -391,7 +389,7 @@ table.compact-table td, table.compact-table th{
 
         <th class="col-nota">
           <a href="{{ url_for('admin',
-            q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+            q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
             nota_min=nota_min, nota_max=nota_max,
             desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
             sort='nota', order=inv if sort=='nota' else 'asc', per_page=per_page, page=1
@@ -402,7 +400,7 @@ table.compact-table td, table.compact-table th{
 
         <th class="col-estado">
           <a href="{{ url_for('admin',
-            q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+            q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
             nota_min=nota_min, nota_max=nota_max,
             desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
             sort='estado', order=inv if sort=='estado' else 'asc', per_page=per_page, page=1
@@ -413,7 +411,7 @@ table.compact-table td, table.compact-table th{
 
         <th class="col-creado">
           <a href="{{ url_for('admin',
-            q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+            q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
             nota_min=nota_min, nota_max=nota_max,
             desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
             sort='creado_en', order=inv if sort=='creado_en' else 'desc', per_page=per_page, page=1
@@ -438,7 +436,8 @@ table.compact-table td, table.compact-table th{
 
         <td class="col-nombre" data-th="Nombre">{{ e.nombre }}</td>
 
-        {# Etapa / Nivel en una sola línea: "Etapa / Nivel" SIN badge #}
+        <td class="col-programa" data-th="Programa">{{ e.programa or 'Inglés' }}</td>
+
         <td class="col-curso" data-th="Etapa / Nivel">
           {% set parts = (e.curso or '').split(' - ') %}
           <span class="stage-inline">
@@ -481,7 +480,7 @@ table.compact-table td, table.compact-table th{
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="9" style="text-align:center;">Sin registros</td></tr>
+      <tr><td colspan="10" style="text-align:center;">Sin registros</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -491,7 +490,7 @@ table.compact-table td, table.compact-table th{
   <ul class="pagination">
     <li class="page-item {{ 'disabled' if page<=1 }}">
       <a class="page-link" href="{{ url_for('admin',
-        q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+        q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
         nota_min=nota_min, nota_max=nota_max,
         desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
         sort=sort, order=order, page=page-1, per_page=per_page
@@ -501,7 +500,7 @@ table.compact-table td, table.compact-table th{
     {% for p in pages %}
     <li class="page-item {{ 'active' if p==page }}">
       <a class="page-link" href="{{ url_for('admin',
-        q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+        q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
         nota_min=nota_min, nota_max=nota_max,
         desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
         sort=sort, order=order, page=p, per_page=per_page
@@ -511,7 +510,7 @@ table.compact-table td, table.compact-table th{
 
     <li class="page-item {{ 'disabled' if page>=total_pages }}">
       <a class="page-link" href="{{ url_for('admin',
-        q=q, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
+        q=q, programa=programa_filtro, etapa=etapa_filtro, nivel=nivel_filtro, estado=estado_filtro,
         nota_min=nota_min, nota_max=nota_max,
         desde=request.args.get('desde',''), hasta=request.args.get('hasta',''),
         sort=sort, order=order, page=page+1, per_page=per_page
@@ -520,40 +519,102 @@ table.compact-table td, table.compact-table th{
   </ul>
 </nav>
 
-<script id="mapa-data" type="application/json">{{ ETAPAS|tojson }}</script>
+<script id="mapa-programas" type="application/json">{{ PROGRAMAS|tojson }}</script>
+<script id="initial-filters" type="application/json">
+{
+  "programa_filtro": {{ (programa_filtro or '')|tojson }},
+  "etapa_filtro": {{ (etapa_filtro or '')|tojson }},
+  "nivel_filtro": {{ (nivel_filtro or '')|tojson }}
+}
+</script>
 
 <script>
-  const MAPA = JSON.parse(document.getElementById('mapa-data').textContent);
+  const PROGRAMAS_MAP = JSON.parse(document.getElementById('mapa-programas').textContent);
+  const INITIAL = JSON.parse(document.getElementById('initial-filters').textContent);
 
-  function fillNiveles(etapa, selectEl, placeholder){
-    const prev = selectEl.value;
+  function getEtapasByPrograma(programa){
+    return PROGRAMAS_MAP[programa] || {};
+  }
+
+  function fillEtapas(programa, selectEl, placeholder, selectedValue=""){
+    const etapas = getEtapasByPrograma(programa);
     selectEl.innerHTML = `<option value="">${placeholder}</option>`;
-    (MAPA[etapa] || []).forEach(n=>{
+    Object.keys(etapas).forEach(etapa=>{
       const o = document.createElement('option');
-      o.value = n; o.textContent = n;
+      o.value = etapa;
+      o.textContent = etapa;
+      if (selectedValue && selectedValue === etapa) o.selected = true;
       selectEl.appendChild(o);
     });
-    if (prev) selectEl.value = prev;
+  }
+
+  function fillNiveles(programa, etapa, selectEl, placeholder, selectedValue=""){
+    const etapas = getEtapasByPrograma(programa);
+    const niveles = etapas[etapa] || [];
+    selectEl.innerHTML = `<option value="">${placeholder}</option>`;
+    niveles.forEach(n=>{
+      const o = document.createElement('option');
+      o.value = n;
+      o.textContent = n;
+      if (selectedValue && selectedValue === n) o.selected = true;
+      selectEl.appendChild(o);
+    });
   }
 
   // Nuevo estudiante
-  const etapaSel = document.getElementById('etapa_new');
-  const nivelSel = document.getElementById('nivel_new');
-  if (etapaSel && nivelSel){
-    etapaSel.addEventListener('change', ()=> fillNiveles(etapaSel.value, nivelSel, "Selecciona nivel"));
+  const programaNew = document.getElementById('programa_new');
+  const etapaNew = document.getElementById('etapa_new');
+  const nivelNew = document.getElementById('nivel_new');
+
+  if (programaNew && etapaNew && nivelNew){
+    fillEtapas(programaNew.value, etapaNew, "Selecciona etapa");
+    fillNiveles(programaNew.value, etapaNew.value, nivelNew, "Selecciona nivel");
+
+    programaNew.addEventListener('change', ()=>{
+      fillEtapas(programaNew.value, etapaNew, "Selecciona etapa");
+      fillNiveles(programaNew.value, "", nivelNew, "Selecciona nivel");
+    });
+
+    etapaNew.addEventListener('change', ()=>{
+      fillNiveles(programaNew.value, etapaNew.value, nivelNew, "Selecciona nivel");
+    });
   }
 
   // Filtros
+  const programaFilter = document.getElementById('programa_filter');
   const etapaFilter = document.getElementById('etapa_filter');
   const nivelFilter = document.getElementById('nivel_filter');
-  if (etapaFilter && nivelFilter){
+
+  if (programaFilter && etapaFilter && nivelFilter){
+    const progInit = INITIAL.programa_filtro || "";
+    const etapaInit = INITIAL.etapa_filtro || "";
+    const nivelInit = INITIAL.nivel_filtro || "";
+
+    if (progInit){
+      fillEtapas(progInit, etapaFilter, "Todas las etapas", etapaInit);
+      fillNiveles(progInit, etapaInit, nivelFilter, "Todos los niveles", nivelInit);
+    } else {
+      etapaFilter.innerHTML = `<option value="">Todas las etapas</option>`;
+      nivelFilter.innerHTML = `<option value="">Todos los niveles</option>`;
+    }
+
+    programaFilter.addEventListener('change', ()=>{
+      if (!programaFilter.value){
+        etapaFilter.innerHTML = `<option value="">Todas las etapas</option>`;
+        nivelFilter.innerHTML = `<option value="">Todos los niveles</option>`;
+        return;
+      }
+      fillEtapas(programaFilter.value, etapaFilter, "Todas las etapas");
+      fillNiveles(programaFilter.value, "", nivelFilter, "Todos los niveles");
+    });
+
     etapaFilter.addEventListener('change', ()=>{
-      fillNiveles(etapaFilter.value, nivelFilter, "Todos los niveles");
+      fillNiveles(programaFilter.value, etapaFilter.value, nivelFilter, "Todos los niveles");
     });
   }
 
   // ==========================================================
-  // ✅ SELECCIÓN GLOBAL + ZIP (LIMITADO A 200)
+  // SELECCIÓN GLOBAL + ZIP
   // ==========================================================
   const MAX_SELECT = 200;
 
@@ -565,7 +626,7 @@ table.compact-table td, table.compact-table th{
   const selectAllFilteredBtn = document.getElementById('selectAllFilteredBtn');
 
   const rowChecks = () => Array.from(document.querySelectorAll('.row-check'));
-  const Selected = new Set(); // ids globales seleccionados (strings)
+  const Selected = new Set();
 
   function syncVisibleCheckboxes(){
     rowChecks().forEach(c => c.checked = Selected.has(String(c.value)));
@@ -590,7 +651,6 @@ table.compact-table td, table.compact-table th{
     first.forEach(id => Selected.add(id));
   }
 
-  // Check all (visibles) con límite
   checkAll?.addEventListener('change', ()=>{
     const checked = checkAll.checked;
 
@@ -600,7 +660,6 @@ table.compact-table td, table.compact-table th{
         c.checked = true;
         Selected.add(String(c.value));
       }
-      // desmarca visibles que no entraron en el límite
       rowChecks().forEach(c=>{
         if (!Selected.has(String(c.value))) c.checked = false;
       });
@@ -617,7 +676,6 @@ table.compact-table td, table.compact-table th{
     refreshSelectedUI();
   });
 
-  // Click individual con límite
   document.addEventListener('change', (e)=>{
     if (e.target && e.target.classList.contains('row-check')){
       const id = String(e.target.value);
@@ -643,7 +701,6 @@ table.compact-table td, table.compact-table th{
     refreshSelectedUI();
   });
 
-  // Descargar ZIP (nunca manda más de 200)
   bulkBtn?.addEventListener('click', (ev)=>{
     ev.preventDefault();
 
@@ -676,7 +733,6 @@ table.compact-table td, table.compact-table th{
     return { ids, total };
   }
 
-  // Seleccionar TODO (filtro) pero solo 200
   selectAllFilteredBtn?.addEventListener('click', async ()=>{
     selectAllFilteredBtn.disabled = true;
     const oldText = selectAllFilteredBtn.textContent;
@@ -707,7 +763,6 @@ table.compact-table td, table.compact-table th{
     }
   });
 
-  // Inicial
   syncVisibleCheckboxes();
   refreshSelectedUI();
 </script>
@@ -730,4 +785,3 @@ table.compact-table td, table.compact-table th{
 {% endwith %}
 
 {% endblock %}
-lllllllllllllkñ-.

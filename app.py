@@ -777,7 +777,19 @@ def notas_pdf(token):
         download_name=f"notas_{nombre.replace(' ', '_')}.pdf",
         mimetype="application/pdf"
     )
+def normalizar_programa_desde_idioma(valor: str) -> str:
+    v = strip_accents_py(str(valor or "")).strip().lower()
 
+    if not v:
+        return "Inglés"
+
+    if "frances" in v or "francais" in v or "french" in v:
+        return "Francés"
+
+    if "ingles" in v or "english" in v or "american" in v:
+        return "Inglés"
+
+    return "Inglés"
 
 # =========================================
 # LOGIN / LOGOUT
@@ -1300,14 +1312,17 @@ def export_xlsx():
 # =========================================
 # IMPORTAR DESDE EXCEL
 # =========================================
+# IMPORTAR DESDE EXCEL
+# =========================================
 @app.route("/admin/import/xlsx", methods=["POST"])
 @login_required
 @role_required("admin")
 def import_xlsx():
     """
     Importa estudiantes desde .xlsx:
-    - Soporta plantilla vieja: programa, nombre, etapa, nivel, nota, notas
-    - Soporta plantilla nueva: programa, idioma, nivel cefr, actividades, punteo final, resultado final, notas
+    - Plantilla actual: nombre, etapa, nivel, idioma, nivel cefr, actividades,
+      punteo final, resultado final, notas
+    - 'idioma' define internamente el 'programa'
     """
     f = request.files.get("archivo")
     if not f or not f.filename:
@@ -1334,7 +1349,6 @@ def import_xlsx():
     def col(name: str):
         return header_map.get(strip_accents_py(name).strip().lower())
 
-    programa_col = col("programa")
     name_cols = [col("nombre completo"), col("nombre")]
     etapa_col = col("etapa")
     nivel_col = col("nivel")
@@ -1358,8 +1372,8 @@ def import_xlsx():
     punteo_final_col = col("punteo final")
     resultado_final_col = col("resultado final")
 
-    if not any(name_cols) or not etapa_col or not nivel_col:
-        flash("Encabezados inválidos. Requeridos: Nombre completo (o Nombre), Etapa y Nivel.", "error")
+    if not any(name_cols) or not etapa_col or not nivel_col or not idioma_col:
+        flash("Encabezados inválidos. Requeridos: Nombre completo (o Nombre), Etapa, Nivel e Idioma.", "error")
         return redirect(url_for("admin"))
 
     ok, skipped = 0, 0
@@ -1373,24 +1387,22 @@ def import_xlsx():
                 if nombre:
                     break
 
-        programa = "Inglés"
-        if programa_col:
-            programa = get_programa(str(ws.cell(row=r, column=programa_col).value or "Inglés").strip())
-
         etapa = str(ws.cell(row=r, column=etapa_col).value or "").strip() if etapa_col else ""
         nivel = str(ws.cell(row=r, column=nivel_col).value or "").strip() if nivel_col else ""
+        idioma_raw = str(ws.cell(row=r, column=idioma_col).value or "").strip() if idioma_col else ""
+
+        programa = normalizar_programa_desde_idioma(idioma_raw)
 
         etapa = canonical_etapa(programa, etapa)
         nivel = canonical_nivel(programa, etapa, nivel)
 
-        if not nombre or not etapa or not nivel:
+        if not nombre or not etapa or not nivel or not idioma_raw:
             skipped += 1
             continue
 
         detalle = {}
+        detalle["idioma"] = programa
 
-        if idioma_col:
-            detalle["idioma"] = str(ws.cell(row=r, column=idioma_col).value or "").strip()
         if nivel_cefr_col:
             detalle["nivel_cefr"] = str(ws.cell(row=r, column=nivel_cefr_col).value or "").strip()
 
@@ -1460,7 +1472,13 @@ def import_xlsx():
                 INSERT INTO estudiantes(token,nombre,curso,nota,estado,creado_en,notas,detalle_notas,programa)
                 VALUES(?,?,?,?,?,?,?,?,?)
             """, (
-                token, nombre, curso_text, float(nota), estado, now, notas_url,
+                token,
+                nombre,
+                curso_text,
+                float(nota),
+                estado,
+                now,
+                notas_url,
                 json.dumps(detalle, ensure_ascii=False) if detalle else None,
                 programa
             ))
@@ -1481,34 +1499,58 @@ def download_import_template():
     ws.title = "ImportarEstudiantes"
 
     headers = [
-        "programa",
-        "nombre completo", "etapa", "nivel",
-        "idioma", "nivel cefr",
-        "examen 1", "examen 2", "lectura", "escritura", "vocabulario",
-        "club de conversacion", "comprension auditiva", "examen general",
-        "punteo final", "resultado final",
-        "notas"
+        "nombre completo",
+        "etapa",
+        "nivel",
+        "idioma",
+        "examen 1",
+        "examen 2",
+        "lectura",
+        "escritura",
+        "vocabulario",
+        "club de conversacion",
+        "comprension auditiva",
+        "examen general",
+        "punteo final",
+        "resultado final",
+        "notas",
     ]
     ws.append(headers)
 
     ws.append([
-        "Inglés",
-        "Juan Pérez", "Intermedia", "B1 PLUS",
-        "Inglés Americano", "B1 CEFR",
-        8, 9, 10, 10, 10,
-        9, 8, 27,
-        91, "APROBADO",
-        ""
+        "Juan Pérez",          # nombre completo
+        "Intermedia",          # etapa
+        "B1 PLUS",             # nivel
+        "Inglés Americano",    # idioma
+        8,                     # examen 1
+        9,                     # examen 2
+        10,                    # lectura
+        10,                    # escritura
+        10,                    # vocabulario
+        9,                     # club de conversacion
+        8,                     # comprension auditiva
+        27,                    # examen general
+        91,                    # punteo final
+        "APROBADO",            # resultado final
+        ""                     # notas
     ])
 
     ws.append([
-        "Francés",
-        "Marie Dupont", "Principiante", "A1",
-        "Francés", "A1 CEFR",
-        6, 7, 8, 8, 7,
-        6, 6, 18,
-        66, "APROBADO",
-        ""
+        "Marie Dupont",        # nombre completo
+        "Principiante",        # etapa
+        "A1",                  # nivel
+        "Francés",             # idioma
+        6,                     # examen 1
+        7,                     # examen 2
+        8,                     # lectura
+        8,                     # escritura
+        7,                     # vocabulario
+        6,                     # club de conversacion
+        6,                     # comprension auditiva
+        18,                    # examen general
+        66,                    # punteo final
+        "APROBADO",            # resultado final
+        ""                     # notas
     ])
 
     header_fill = PatternFill("solid", fgColor="DCE6F1")
@@ -1523,6 +1565,28 @@ def download_import_template():
         cell.font = header_font
         cell.alignment = header_align
         cell.border = border_all
+
+    # ancho de columnas
+    widths = {
+        1: 28,  # nombre completo
+        2: 18,  # etapa
+        3: 14,  # nivel
+        4: 20,  # idioma
+        5: 12,  # examen 1
+        6: 12,  # examen 2
+        7: 12,  # lectura
+        8: 12,  # escritura
+        9: 14,  # vocabulario
+        10: 22, # club de conversacion
+        11: 22, # comprension auditiva
+        12: 16, # examen general
+        13: 14, # punteo final
+        14: 16, # resultado final
+        15: 14, # notas
+    }
+
+    for col_idx, width in widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
 
     out = BytesIO()
     wb.save(out)
